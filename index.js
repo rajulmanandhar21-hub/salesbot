@@ -37,24 +37,15 @@ app.post('/webhook', async (req, res) => {
     const from = message.from;
 
     // Send to Gemini
-    const geminiRes = await axios.post(
-     'https://api.groq.com/openai/v1/chat/completions',
-     {
-       model: "llama-3.3-70b-versatile",
-       messages: [
-         { role: "system", content: SYSTEM_PROMPT },
-         { role: "user", content: userMessage }
-       ]
-     },
-     {
-       headers: {
-         Authorization: `Bearer ${process.env.GROQ_API_KEY}`,
-         'Content-Type': 'application/json'
-       }
-     }
-   );
+const geminiRes = await axios.post(
+  `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview:generateContent?key=${process.env.GEMINI_API_KEY}`,
+  {
+    contents: [{ role: "user", parts: [{ text: userMessage }] }],
+    systemInstruction: { parts: [{ text: SYSTEM_PROMPT }] }
+  }
+);
 
-    const reply = geminiRes.data.choices[0].message.content;
+const reply = geminiRes.data.candidates[0].content.parts[0].text;
 
     // Send reply via WhatsApp
     await axios.post(
