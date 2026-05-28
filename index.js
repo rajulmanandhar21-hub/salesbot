@@ -36,15 +36,16 @@ app.post('/webhook', async (req, res) => {
     const userMessage = message.text.body;
     const from = message.from;
 
-    // Send to Gemini
-const geminiRes = await axios.post(
-`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${process.env.GEMINI_API_KEY}`  {
-    contents: [{ role: "user", parts: [{ text: userMessage }] }],
-    systemInstruction: { parts: [{ text: SYSTEM_PROMPT }] }
-  }
-);
+    // Send to Gemini 2.5 Flash
+    const geminiRes = await axios.post(
+      `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${GEMINI_API_KEY}`,
+      {
+        contents: [{ role: "user", parts: [{ text: userMessage }] }],
+        systemInstruction: { parts: [{ text: SYSTEM_PROMPT }] }
+      }
+    );
 
-const reply = geminiRes.data.candidates[0].content.parts[0].text;
+    const reply = geminiRes.data.candidates[0].content.parts[0].text;
 
     // Send reply via WhatsApp
     await axios.post(
