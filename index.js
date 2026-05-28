@@ -40,7 +40,7 @@ app.post('/webhook', async (req, res) => {
     const geminiRes = await axios.post(
      'https://api.groq.com/openai/v1/chat/completions',
      {
-       model: "llama3-8b-8192",
+       model: "llama-3.1-8b-instant",
        messages: [
          { role: "system", content: SYSTEM_PROMPT },
          { role: "user", content: userMessage }
