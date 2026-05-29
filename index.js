@@ -26,14 +26,24 @@ async function askGemini(userMessage) {
 
 // Helper: Send to Google Sheets
 async function sendToGoogleSheets(phone, name, education) {
-  try {
-    const url = process.env.GOOGLE_SHEET_URL;
-    if (!url) return console.error("GOOGLE_SHEET_URL missing in environment variables!");
-    await axios.post(url, { phone, name, education });
-    console.log(`Successfully logged lead to Google Sheets: ${name}`);
-  } catch (err) {
-    console.error("Error pushing data to Google Sheets:", err.message);
-  }
+    try {
+        const url = process.env.GOOGLE_SHEET_URL;
+        if (!url) return console.error("GOOGLE_SHEET_URL missing!");
+
+        // We stringify the JSON payload to ensure Google's doPost apps script parses it smoothly
+        await axios.post(url, JSON.stringify({
+            phone: phone,
+            name: name,
+            education: education
+        }), {
+            headers: {
+                'Content-Type': 'text/plain' // Using text/plain completely bypasses CORS pre-flight blocks on Google Apps Script
+            }
+        });
+        console.log(`Successfully logged lead to Google Sheets: ${name}`);
+    } catch (err) {
+        console.error("Error pushing data to Google Sheets:", err.message);
+    }
 }
 
 // Helper: Send WhatsApp message
