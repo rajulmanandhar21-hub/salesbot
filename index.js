@@ -232,7 +232,6 @@ app.post('/webhook', async (req, res) => {
     botResponseText = "Thank you! Your details have been submitted.";
     currentState.stage = "Closed";
   }
-}
 
     // 7. STAGE 0: NORMAL CONVERSATION MODE
 } else {
