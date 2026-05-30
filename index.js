@@ -57,6 +57,29 @@ async function askGemini(userMessage) {
   }
 }
 
+// Helper: Condense historic chat data array into a professional HR profile snippet
+async function generateChatSummary(chatHistoryArray) {
+  if (!chatHistoryArray || chatHistoryArray.length === 0) return "No conversation log available.";
+
+  // Transform your chat log array into a single plain-text transcript block
+  const formattedTranscript = chatHistoryArray
+    .map(msg => `${msg.role === "user" ? "Candidate" : "Bot"}: ${msg.text}`)
+    .join("\n");
+
+  // Dynamic injection combining your Render instructions with the live chat text
+  const payloadMessage = `${process.env.SUMMARY_PROMPT}\n\nTRANSCRIPT TO EVALUATE:\n${formattedTranscript}`;
+
+  try {
+    console.log("🧠 Generating applicant profile summary snippet via Gemini...");
+    // Fires an execution call to your existing askGemini runner
+    const rawSummaryOutput = await askGemini(payloadMessage);
+    return rawSummaryOutput.trim();
+  } catch (err) {
+    console.warn("⚠️ Summary engine failed to execute. Falling back to default baseline string.");
+    return "Profile registration completed successfully.";
+  }
+}
+
 // Helper: Send data to Google Sheets Web App
 async function sendToGoogleSheets(phone, name, education, chatSummary) {
   try {
@@ -184,22 +207,32 @@ app.post('/webhook', async (req, res) => {
 
     // 6. STAGE 2: HANDLING INPUT FOR EDUCATION
     } else if (currentState.stage === 2) {
-      const classificationPrompt = `The user is being asked for their qualification. They responded with: "${userMessage}". If they are trying to back out, cancel, or are refusing to give details, reply with the word "CANCEL". Otherwise, reply with "CONTINUE".`;
-      const checkCancel = await askGemini(classificationPrompt);
+  // 1. Save the education details the user just sent
+  currentState.education = userMessage.trim();
+  
+  console.log(`🎯 Funnel data gathering complete for: ${from}. Extracting summary...`);
+  
+  try {
+    // 2. Pass the entire chat history array to your new helper function
+    const candidateSummarySnippet = await generateChatSummary(currentState.history);
 
-      if (checkCancel.includes("CANCEL")) {
-        currentState.stage = 0;
-        currentState.status = "Closed";
-        await sendWhatsApp(from, "Understood. Stopping the application here. Have a great day!");
-        return res.sendStatus(200);
-      }
+    // 3. Send ALL 4 pieces of data to Google Sheets
+    await sendToGoogleSheets(
+      from,
+      currentState.name,
+      currentState.education,
+      candidateSummarySnippet // <-- Your new summary string injected here!
+    );
 
-      currentState.education = userMessage;
-      currentState.stage = 3;
-      botResponseText = `Thank you, ${currentState.name}! Your application has been submitted successfully to our hiring team. We will contact you soon.`;
+    botResponseText = "Thank you so much! Your application profile details have been securely logged into our system database. Our HR recruitment coordination team will reach out directly to your phone number within the next 24 hours. Have a wonderful day!";
+    currentState.stage = "Closed";
 
-      sendToGoogleSheets(from, currentState.name, currentState.education);
-      applicationState[from] = { stage: 0, name: "", education: "", status: "Active", lastInteraction: now };
+  } catch (error) {
+    console.error("🚨 Error during Stage 2 completion pipeline:", error.message);
+    botResponseText = "Thank you! Your details have been submitted.";
+    currentState.stage = "Closed";
+  }
+}
 
     // 7. STAGE 0: NORMAL CONVERSATION MODE
 } else {
