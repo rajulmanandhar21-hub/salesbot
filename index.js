@@ -14,46 +14,45 @@ const applicationState = {};
 
 // Helper: Ask Gemini with Automatic Backup Fallback
 async function askGemini(userMessage) {
-  // Grab both keys from your environment variables
-  const primaryKey = process.env.GEMINI_API_KEY;
-  const backupKey = process.env.GEMINI_API_KEY_BACKUP;
+  const apiKeys = [
+    process.env.GEMINI_API_KEY,
+    process.env.GEMINI_API_KEY_BACKUP,
+    process.env.GEMINI_API_KEY_BACKUP_2
+  ];
 
-  try {
-    // Attempt 1: Try using the primary API key
-    console.log("Attempting to call Gemini with Primary API Key...");
-    const geminiRes = await axios.post(
-      `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${primaryKey}`,
-      {
-        contents: [{ role: "user", parts: [{ text: userMessage }] }],
-        systemInstruction: { parts: [{ text: SYSTEM_PROMPT }] }
-      }
-    );
-    return geminiRes.data.candidates[0].content.parts[0].text;
-
-  } catch (primaryError) {
-    console.warn("Primary Gemini API key failed or rate-limited:", primaryError.message);
-
-    // Check if a backup key actually exists before trying
-    if (!backupKey) {
-      throw new Error("Primary API key failed and no GEMINI_API_KEY_BACKUP was found in environment variables.");
+  for (let i = 0; i < apiKeys.length; i++) {
+    const currentKey = apiKeys[i];
+    
+    if (!currentKey) {
+      console.warn(`⚠️ Key index [${i}] is not configured in environment variables. Skipping...`);
+      continue;
     }
 
     try {
-      // Attempt 2: Fallback to the secondary API key
-      console.log("🔄 Switching to Backup Gemini API Key...");
-      const backupRes = await axios.post(
-        `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${backupKey}`,
+      const label = i === 0 ? "PRIMARY" : i === 1 ? "FIRST BACKUP" : "SECOND BACKUP";
+      console.log(`🚀 Attempting Gemini API call using the [${label}] key...`);
+
+      const geminiRes = await axios.post(
+        `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${currentKey}`,
         {
           contents: [{ role: "user", parts: [{ text: userMessage }] }],
           systemInstruction: { parts: [{ text: SYSTEM_PROMPT }] }
         }
       );
-      console.log("Successfully retrieved response using backup key!");
-      return backupRes.data.candidates[0].content.parts[0].text;
 
-    } catch (backupError) {
-      console.error("CRITICAL: Both Primary and Backup Gemini API keys have failed.");
-      throw backupError; // Rethrow if both options are completely exhausted
+      console.log(`✅ Success! Response fetched using the [${label}] key.`);
+      return geminiRes.data.candidates[0].content.parts[0].text;
+
+    } catch (error) {
+      const label = i === 0 ? "PRIMARY" : i === 1 ? "FIRST BACKUP" : "SECOND BACKUP";
+      console.warn(`❌ [${label}] key failed or rate-limited. Error: ${error.message}`);
+      
+      if (i === apiKeys.length - 1) {
+        console.error("🚨 CRITICAL: All primary and backup Gemini API keys have been completely exhausted!");
+        throw error;
+      }
+      
+      console.log("🔄 Shifting down the pipeline to the next backup key...");
     }
   }
 }
