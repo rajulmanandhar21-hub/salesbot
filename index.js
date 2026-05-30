@@ -57,25 +57,27 @@ async function askGemini(userMessage) {
   }
 }
 
-// Helper: Send to Google Sheets
-async function sendToGoogleSheets(phone, name, education) {
-    try {
-        const url = process.env.GOOGLE_SHEET_URL;
-        if (!url) return console.error("GOOGLE_SHEET_URL missing!");
-
-        await axios.post(url, JSON.stringify({
-            phone: phone,
-            name: name,
-            education: education
-        }), {
-            headers: {
-                'Content-Type': 'text/plain' 
-            }
-        });
-        console.log(`Successfully logged lead to Google Sheets: ${name}`);
-    } catch (err) {
-        console.error("Error pushing data to Google Sheets:", err.message);
+// Helper: Send data to Google Sheets Web App
+async function sendToGoogleSheets(phone, name, education, chatSummary) {
+  try {
+    const url = process.env.GOOGLE_SHEET_URL;
+    if (!url) {
+      console.warn("⚠️ GOOGLE_SHEET_URL environment variable is missing.");
+      return;
     }
+
+    // Pass all four parameters cleanly to your Google Apps Script
+    await axios.post(url, {
+      phone: phone,
+      name: name,
+      education: education,
+      summary: chatSummary // Your brand-new data column field
+    });
+
+    console.log(`📊 Spreadsheet successfully updated for user: ${phone}`);
+  } catch (error) {
+    console.error("❌ Failed to push data row to Google Sheets:", error.message);
+  }
 }
 
 // Helper: Send WhatsApp message
