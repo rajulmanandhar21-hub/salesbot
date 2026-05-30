@@ -109,6 +109,9 @@ app.get('/webhook', (req, res) => {
 });
 
 // Handle incoming WhatsApp messages
+// =====================================================================
+// REPLACE ONLY THIS BLOCK FROM YOUR FILE (FROM app.post DOWN TO THE END OF ITS BLOCK)
+// =====================================================================
 app.post('/webhook', async (req, res) => {
   try {
     const entry = req.body.entry?.[0];
@@ -139,7 +142,7 @@ app.post('/webhook', async (req, res) => {
       currentState.stage = 0;
       currentState.name = "";
       currentState.education = "";
-      currentState.status = "Active"; // Re-activate user session if they ghosted and returned later
+      currentState.status = "Active"; 
     }
 
     // Always update interaction time whenever they message
@@ -154,9 +157,8 @@ app.post('/webhook', async (req, res) => {
       return res.sendStatus(200);
     }
 
-    // 4. IF CONVERSATION IS CLOSED, IGNORE GENERIC REPLIES
+    // 4. IF CONVERSATION IS CLOSED, MULTIPLE REPLIES PROTECTOR
     if (currentState.status === "Closed") {
-      // If they keep texting back with basic acknowledgments, just reply once or drop it quietly
       console.log(`User ${from} has opted out. Ignoring message to preserve quota.`);
       return res.sendStatus(200);
     }
@@ -165,7 +167,6 @@ app.post('/webhook', async (req, res) => {
 
     // 5. STAGE 1: HANDLING INPUT FOR NAME
     if (currentState.stage === 1) {
-      // Let Gemini check context if user tries to back out casually mid-process
       const classificationPrompt = `The user is in the middle of a form-filling process for a job application. They were asked for their name. They responded with: "${userMessage}". If they are trying to back out, cancel, or say they aren't interested anymore (even casually), reply with the word "CANCEL". Otherwise, reply with "CONTINUE".`;
       const checkCancel = await askGemini(classificationPrompt);
 
@@ -182,7 +183,6 @@ app.post('/webhook', async (req, res) => {
 
     // 6. STAGE 2: HANDLING INPUT FOR EDUCATION
     } else if (currentState.stage === 2) {
-      // Let Gemini check context if user backs out here
       const classificationPrompt = `The user is being asked for their qualification. They responded with: "${userMessage}". If they are trying to back out, cancel, or are refusing to give details, reply with the word "CANCEL". Otherwise, reply with "CONTINUE".`;
       const checkCancel = await askGemini(classificationPrompt);
 
@@ -197,17 +197,13 @@ app.post('/webhook', async (req, res) => {
       currentState.stage = 3;
       botResponseText = `Thank you, ${currentState.name}! Your application has been submitted successfully to our hiring team. We will contact you soon.`;
 
-      // Log to Google Sheets in background
       sendToGoogleSheets(from, currentState.name, currentState.education);
-
-      // Reset state back to base conversation mode
       applicationState[from] = { stage: 0, name: "", education: "", status: "Active", lastInteraction: now };
 
     // 7. STAGE 0: NORMAL CONVERSATION MODE
     } else {
       botResponseText = await askGemini(userMessage);
 
-      // Check if user wants to apply
       if (
         lowerMessage.includes("apply") ||
         lowerMessage.includes("farm varna") ||
@@ -218,6 +214,14 @@ app.post('/webhook', async (req, res) => {
       }
     }
 
+    // 🛑 GLOBAL INTERCEPT: Strips the tag if Gemini appended it anywhere in Stage 0
+    if (botResponseText.includes("[CLOSE_CONVERSATION]")) {
+      console.log(`Global intercept: Gemini signaled a close conversation event for ${from}`);
+      botResponseText = botResponseText.replace("[CLOSE_CONVERSATION]", "").trim();
+      currentState.stage = 0;
+      currentState.status = "Closed";
+    }
+
     await sendWhatsApp(from, botResponseText);
     res.sendStatus(200);
 
@@ -226,6 +230,8 @@ app.post('/webhook', async (req, res) => {
     res.sendStatus(500);
   }
 });
-
+// =====================================================================
+// END OF REPLACEMENT BLOCK (Leave the app.listen line below it untouched)
+// =====================================================================
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => console.log(`Bot running on port ${PORT}`));
