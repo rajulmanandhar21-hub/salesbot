@@ -30,14 +30,13 @@ async function sendToGoogleSheets(phone, name, education) {
         const url = process.env.GOOGLE_SHEET_URL;
         if (!url) return console.error("GOOGLE_SHEET_URL missing!");
 
-        // We stringify the JSON payload to ensure Google's doPost apps script parses it smoothly
         await axios.post(url, JSON.stringify({
             phone: phone,
             name: name,
             education: education
         }), {
             headers: {
-                'Content-Type': 'text/plain' // Using text/plain completely bypasses CORS pre-flight blocks on Google Apps Script
+                'Content-Type': 'text/plain' 
             }
         });
         console.log(`Successfully logged lead to Google Sheets: ${name}`);
@@ -87,24 +86,79 @@ app.post('/webhook', async (req, res) => {
     }
 
     const userMessage = message.text.body.trim();
+    const lowerMessage = userMessage.toLowerCase();
     const from = message.from;
 
-    // Initialize state for new conversations
+    const now = new Date();
+
+    // 1. Initialize or Reset state for conversations
     if (!applicationState[from]) {
-      applicationState[from] = { stage: 0, name: "", education: "" };
+      applicationState[from] = { stage: 0, name: "", education: "", status: "Active", lastInteraction: now };
     }
 
     const currentState = applicationState[from];
+
+    // 2. TIMEOUT / "LEFT ON SEEN" LOGIC (4-Hour Check)
+    const hoursDifference = (now - new Date(currentState.lastInteraction)) / (1000 * 60 * 60);
+    if (hoursDifference > 4) {
+      console.log(`User ${from} was left on seen for over 4 hours. Resetting session context.`);
+      currentState.stage = 0;
+      currentState.name = "";
+      currentState.education = "";
+      currentState.status = "Active"; // Re-activate user session if they ghosted and returned later
+    }
+
+    // Always update interaction time whenever they message
+    currentState.lastInteraction = now;
+
+    // 3. HARD-CODED KILL KEYWORDS (Immediate escape hatch)
+    const exitKeywords = ["don't want to apply", "cancel", "stop", "i don't want to apply anymore", "thank you no", "bhayo pardaina"];
+    if (exitKeywords.some(keyword => lowerMessage.includes(keyword))) {
+      currentState.stage = 0;
+      currentState.status = "Closed";
+      await sendWhatsApp(from, "Understood. I have canceled your application setup. Let me know if you need anything else!");
+      return res.sendStatus(200);
+    }
+
+    // 4. IF CONVERSATION IS CLOSED, IGNORE GENERIC REPLIES
+    if (currentState.status === "Closed") {
+      // If they keep texting back with basic acknowledgments, just reply once or drop it quietly
+      console.log(`User ${from} has opted out. Ignoring message to preserve quota.`);
+      return res.sendStatus(200);
+    }
+
     let botResponseText = "";
 
+    // 5. STAGE 1: HANDLING INPUT FOR NAME
     if (currentState.stage === 1) {
-      // Waiting for name
+      // Let Gemini check context if user tries to back out casually mid-process
+      const classificationPrompt = `The user is in the middle of a form-filling process for a job application. They were asked for their name. They responded with: "${userMessage}". If they are trying to back out, cancel, or say they aren't interested anymore (even casually), reply with the word "CANCEL". Otherwise, reply with "CONTINUE".`;
+      const checkCancel = await askGemini(classificationPrompt);
+
+      if (checkCancel.includes("CANCEL")) {
+        currentState.stage = 0;
+        currentState.status = "Closed";
+        await sendWhatsApp(from, "No problem at all! I have stopped the application process. Feel free to reach out whenever you're ready.");
+        return res.sendStatus(200);
+      }
+
       currentState.name = userMessage;
       currentState.stage = 2;
       botResponseText = "Got it! And what is your highest educational qualification? (e.g., +2 Pass, Bachelor's in BBA, BBS, etc.)";
 
+    // 6. STAGE 2: HANDLING INPUT FOR EDUCATION
     } else if (currentState.stage === 2) {
-      // Waiting for education
+      // Let Gemini check context if user backs out here
+      const classificationPrompt = `The user is being asked for their qualification. They responded with: "${userMessage}". If they are trying to back out, cancel, or are refusing to give details, reply with the word "CANCEL". Otherwise, reply with "CONTINUE".`;
+      const checkCancel = await askGemini(classificationPrompt);
+
+      if (checkCancel.includes("CANCEL")) {
+        currentState.stage = 0;
+        currentState.status = "Closed";
+        await sendWhatsApp(from, "Understood. Stopping the application here. Have a great day!");
+        return res.sendStatus(200);
+      }
+
       currentState.education = userMessage;
       currentState.stage = 3;
       botResponseText = `Thank you, ${currentState.name}! Your application has been submitted successfully to our hiring team. We will contact you soon.`;
@@ -112,15 +166,14 @@ app.post('/webhook', async (req, res) => {
       // Log to Google Sheets in background
       sendToGoogleSheets(from, currentState.name, currentState.education);
 
-      // Reset state
-      applicationState[from] = { stage: 0, name: "", education: "" };
+      // Reset state back to base conversation mode
+      applicationState[from] = { stage: 0, name: "", education: "", status: "Active", lastInteraction: now };
 
+    // 7. STAGE 0: NORMAL CONVERSATION MODE
     } else {
-      // Normal conversation — send to Gemini
       botResponseText = await askGemini(userMessage);
 
       // Check if user wants to apply
-      const lowerMessage = userMessage.toLowerCase();
       if (
         lowerMessage.includes("apply") ||
         lowerMessage.includes("farm varna") ||
