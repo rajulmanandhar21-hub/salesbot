@@ -158,6 +158,7 @@ app.post('/webhook', async (req, res) => {
     }
 
     const currentState = applicationState[from];
+    currentState.history.push({ role: "user", text: userMessage });
 
     // 2. TIMEOUT / "LEFT ON SEEN" LOGIC (4-Hour Check)
     const hoursDifference = (now - new Date(currentState.lastInteraction)) / (1000 * 60 * 60);
@@ -258,7 +259,7 @@ app.post('/webhook', async (req, res) => {
       currentState.stage = 0;
       currentState.status = "Closed";
     }
-
+    currentState.history.push({ role: "model", text: botResponseText });
     await sendWhatsApp(from, botResponseText);
     res.sendStatus(200);
 
