@@ -200,24 +200,20 @@ app.post('/webhook', async (req, res) => {
       applicationState[from] = { stage: 0, name: "", education: "", status: "Active", lastInteraction: now };
 
     // 7. STAGE 0: NORMAL CONVERSATION MODE
-   
 } else {
   botResponseText = await askGemini(userMessage);
 
-  // Check if Gemini determined the user has finished all inquiries and wants to apply
   if (botResponseText.includes("[START_APPLICATION]")) {
     console.log(`Smart intercept: Gemini initiated form-filling mode for ${from}`);
     
-    // Strip the structural tag out so the user never sees it on WhatsApp
-    botResponseText = botResponseText.replace("[START_APPLICATION]", "").trim();
+    // Strip the structural tag out
+    let transitionMessage = botResponseText.replace("[START_APPLICATION]", "").trim();
     
-    // Smoothly shift them into Stage 1 (Name collection)
+    // Smoothly shift the state directly into Stage 1
     currentState.stage = 1;
     
-    // If Gemini didn't provide a custom transition sentence, use a fallback greeting
-    if (!botResponseText) {
-      botResponseText = "Great! Let's get your application started. What is your full name?";
-    }
+    // FIX: Instead of just transitioning, attach the clear question asking for their name right away!
+    botResponseText = transitionMessage + "\n\nGreat! Let's get your application registered for the hiring team. To start, what is your full name?";
   }
 }
 
