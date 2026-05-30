@@ -153,12 +153,26 @@ app.post('/webhook', async (req, res) => {
     const now = new Date();
 
     // 1. Initialize or Reset state for conversations
-    if (!applicationState[from]) {
-      applicationState[from] = { stage: 0, name: "", education: "", status: "Active", lastInteraction: now };
-    }
+    // Find or create the session state for the incoming phone number
+if (!applicationState[from]) {
+  // 🚀 FIX: Make absolutely sure 'history: []' is declared right here!
+  applicationState[from] = { 
+    stage: 0, 
+    name: "", 
+    education: "", 
+    history: [] 
+  };
+}
 
-    const currentState = applicationState[from];
-    currentState.history.push({ role: "user", text: userMessage });
+const currentState = applicationState[from];
+
+// Safely ensure history array exists even if an old session object corrupted it
+if (!currentState.history) {
+  currentState.history = [];
+}
+
+// Now this line will run beautifully without crashing!
+currentState.history.push({ role: "user", text: userMessage });
 
     // 2. TIMEOUT / "LEFT ON SEEN" LOGIC (4-Hour Check)
     const hoursDifference = (now - new Date(currentState.lastInteraction)) / (1000 * 60 * 60);
