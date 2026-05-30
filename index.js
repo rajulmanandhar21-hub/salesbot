@@ -12,16 +12,50 @@ const SYSTEM_PROMPT = process.env.SYSTEM_PROMPT;
 // In-memory application state tracker
 const applicationState = {};
 
-// Helper: Ask Gemini
+// Helper: Ask Gemini with Automatic Backup Fallback
 async function askGemini(userMessage) {
-  const geminiRes = await axios.post(
-    `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${GEMINI_API_KEY}`,
-    {
-      contents: [{ role: "user", parts: [{ text: userMessage }] }],
-      systemInstruction: { parts: [{ text: SYSTEM_PROMPT }] }
+  // Grab both keys from your environment variables
+  const primaryKey = process.env.GEMINI_API_KEY;
+  const backupKey = process.env.GEMINI_API_KEY_BACKUP;
+
+  try {
+    // Attempt 1: Try using the primary API key
+    console.log("Attempting to call Gemini with Primary API Key...");
+    const geminiRes = await axios.post(
+      `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${primaryKey}`,
+      {
+        contents: [{ role: "user", parts: [{ text: userMessage }] }],
+        systemInstruction: { parts: [{ text: SYSTEM_PROMPT }] }
+      }
+    );
+    return geminiRes.data.candidates[0].content.parts[0].text;
+
+  } catch (primaryError) {
+    console.warn("Primary Gemini API key failed or rate-limited:", primaryError.message);
+
+    // Check if a backup key actually exists before trying
+    if (!backupKey) {
+      throw new Error("Primary API key failed and no GEMINI_API_KEY_BACKUP was found in environment variables.");
     }
-  );
-  return geminiRes.data.candidates[0].content.parts[0].text;
+
+    try {
+      // Attempt 2: Fallback to the secondary API key
+      console.log("🔄 Switching to Backup Gemini API Key...");
+      const backupRes = await axios.post(
+        `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${backupKey}`,
+        {
+          contents: [{ role: "user", parts: [{ text: userMessage }] }],
+          systemInstruction: { parts: [{ text: SYSTEM_PROMPT }] }
+        }
+      );
+      console.log("Successfully retrieved response using backup key!");
+      return backupRes.data.candidates[0].content.parts[0].text;
+
+    } catch (backupError) {
+      console.error("CRITICAL: Both Primary and Backup Gemini API keys have failed.");
+      throw backupError; // Rethrow if both options are completely exhausted
+    }
+  }
 }
 
 // Helper: Send to Google Sheets
