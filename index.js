@@ -243,9 +243,8 @@ app.post('/webhook', async (req, res) => {
         botResponseText = "Got it! And what is your highest educational qualification? (e.g., +2 Pass, Bachelor's in BBA, BBS, etc.)";
       }
 
-    // Stage 2: Collect education
+// Stage 2: Collect education & finalize priority assessment
     } else if (currentState.stage === 2) {
-      // Classify if user is answering the question or asking something
       const classificationPrompt = `You are a strict single-word classifier. Nothing else.
 
       A job applicant was asked: "What is your highest educational qualification?"
@@ -272,30 +271,47 @@ app.post('/webhook', async (req, res) => {
         botResponseText = "No problem at all! I have stopped the application process. Feel free to reach out whenever you're ready.";
 
       } else if (classification === "QUESTION") {
-
-        // Answer their concern using Gemini but stay in Stage 2
         const answerPrompt = `You are an HR assistant. A job applicant asked this question about their qualification during an application: "${userMessage}". Answer their concern helpfully and honestly based on the job details you know. At the end of your answer, remind them to please provide their highest educational qualification to continue their application.`;
         const answerResult = await askGemini(answerPrompt);
         botResponseText = answerResult.replyText;
-        // Stage stays at 2 — we're still waiting for their qualification
 
       } else {
         // ANSWER — save and complete the funnel
         currentState.education = userMessage.trim();
-        console.log(`🎯 Funnel complete for: ${from}`);
+        console.log(`🎯 Funnel complete for: ${from}. Parsing priority rating...`);
 
         try {
-          const candidateSummary = await generateChatSummary(currentState.history);
-          await sendToGoogleSheets(from, currentState.name, currentState.education, candidateSummary);
+          // 1. Run the updated Summary Prompt via Gemini
+          let candidateSummary = await generateChatSummary(currentState.history);
+          
+          // 2. Initialize default priority baseline
+          let detectedPriority = "MEDIUM"; 
+
+          // 3. Regular expression to look for the system prompt tag
+          const priorityRegex = /\[PRIORITY:\s*(HIGH|MEDIUM|LOW)\]/i;
+          const match = candidateSummary.match(priorityRegex);
+          
+          if (match && match[1]) {
+            // Extract "HIGH", "MEDIUM", or "LOW" from group 1 capture
+            detectedPriority = match[1].toUpperCase(); 
+            
+            // Clean up the summary so the tag itself doesn't show up in the spreadsheet cell text
+            candidateSummary = candidateSummary.replace(priorityRegex, "").trim();
+          }
+
+          console.log(`✨ Priority Engine Determined: [${detectedPriority}] for candidate ${currentState.name}`);
+
+          // 4. Dispatch the payload out to your Google Apps Script Webhook
+          await sendToGoogleSheets(from, currentState.name, currentState.education, candidateSummary, detectedPriority);
+          
           botResponseText = "Thank you so much! Your application profile details have been securely logged into our system. Our HR team will reach out within 24 hours. Have a wonderful day!";
           currentState.stage = "Closed";
         } catch (error) {
-          console.error("🚨 Stage 2 error:", error.message);
+          console.error("🚨 Backend Extraction Error:", error.message);
           botResponseText = "Thank you! Your details have been submitted.";
           currentState.stage = "Closed";
         }
       }
-
     // Stage 0: Normal conversation
     } else {
       const result = await askGemini(userMessage);
