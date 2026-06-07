@@ -258,79 +258,74 @@ app.post('/webhook', async (req, res) => {
         botResponseText = "Got it! And what is your highest educational qualification? (e.g., +2 Pass, Bachelor's in BBA, BBS, etc.)";
       }
 
-// Stage 2: Collect education & finalize priority assessment
-    } else if (currentState.stage === 2) {
-      const classificationPrompt = `You are a strict single-word classifier. Nothing else.
-
-      A job applicant was asked: "What is your highest educational qualification?"
-      Their reply was: "${userMessage}"
-
-      Your job:
-      - If their reply is ONLY stating a degree or education level (like "BBA", "MBBS", "+2", "Bachelor", "Masters", "SLC pass"), output: ANSWER
-      - If their reply contains ANY question mark, doubt, concern, or asks if something is acceptable (like "is this okay?", "I have MBBS but not management, is that fine?", "does this count?"), output: QUESTION  
-      - If they want to stop or cancel, output: CANCEL
-      
-      STRICT RULES:
-      - Output exactly one word only
-      - No punctuation
-      - No explanation
-      - No extra words
-      - Just one of these three: ANSWER, QUESTION, or CANCEL`;
-
-      const classResult = await askGemini(classificationPrompt);
-      const classification = classResult.replyText.trim().toUpperCase().split(/\s+/)[0];
-
-      if (classification === "CANCEL") {
-        currentState.stage = 0;
-        currentState.status = "Closed";
-        botResponseText = "No problem at all! I have stopped the application process. Feel free to reach out whenever you're ready.";
-
-      } else if (classification === "QUESTION") {
-        const answerPrompt = `You are an HR assistant. A job applicant asked this question about their qualification during an application: "${userMessage}". Answer their concern helpfully and honestly based on the job details you know. At the end of your answer, remind them to please provide their highest educational qualification to continue their application.`;
-        const answerResult = await askGemini(answerPrompt);
-        botResponseText = answerResult.replyText;
-
-      } else {
+} else {
         // ANSWER — Process and clean data
-        console.log(`🎯 Funnel complete for: ${from}. Parsing fields...`);
+        console.log(`🎯 Funnel complete for: ${from}. Running optimized single-call extraction...`);
 
         try {
-          // A. Clean up the qualification string so it isn't a massive sentence
-          const cleanEdPrompt = `Extract ONLY the education degree/qualification level from this text. Keep it to 1-3 words max (e.g., "BBA Finance", "+2 Commerce", "BBS"). Text: "${userMessage}"`;
-          const edResult = await askGemini(cleanEdPrompt);
-          currentState.education = edResult.replyText.trim();
+          // 1. Build a combined instruction prompt so we only hit the API ONCE
+          const formattedTranscript = currentState.history
+            .map(msg => `${msg.role === "user" ? "Candidate" : "Bot"}: ${msg.text}`)
+            .join("\n");
 
-          // B. Run the updated Summary Prompt via Gemini to evaluate priority
-          let candidateSummary = await generateChatSummary(currentState.history);
-          
-          // C. Initialize default priority baseline
-          let detectedPriority = "MEDIUM"; 
+          const combinedEvaluationPrompt = `
+${process.env.SYSTEM_PROMPT}
 
-          // D. Regular expression to look for the system prompt tag [PRIORITY: HIGH]
-          const priorityRegex = /\[PRIORITY:\s*(HIGH|MEDIUM|LOW)\]/i;
-          const match = candidateSummary.match(priorityRegex);
+=========================================
+EVALUATION TASK INSTRUCTIONS:
+You are an internal HR data assistant. Analyze the transcript below and output exactly three things formatted precisely as JSON text. 
+
+Expected JSON format:
+{
+  "education": "1-3 words extraction of highest degree (e.g. BBA Finance, +2 Pass)",
+  "priority": "HIGH, MEDIUM, or LOW based on the system criteria",
+  "summary": "Your concise 2-sentence professional summary."
+}
+
+TRANSCRIPT TO EVALUATE:
+${formattedTranscript}
+`;
+
+          // 2. Make a single API call instead of multiple stacked requests
+          console.log("🧠 Executing combined token-saving evaluation call...");
+          const evaluationResult = await askGemini(combinedEvaluationPrompt);
           
-          if (match && match[1]) {
-            detectedPriority = match[1].toUpperCase(); 
-            // Strip the priority bracket completely out of the text block summary
-            candidateSummary = candidateSummary.replace(priorityRegex, "").trim();
+          let parsedData;
+          try {
+            // Extract code block content if Gemini wraps it in markdown ```json
+            let cleanJsonText = evaluationResult.replyText.replace(/```json|```/g, "").trim();
+            parsedData = JSON.parse(cleanJsonText);
+          } catch (jsonErr) {
+            console.warn("⚠️ JSON parse failed, running regex fallback parsing...");
+            // Fallback parsing if JSON structure gets distorted
+            parsedData = {
+              education: userMessage.trim().substring(0, 30),
+              priority: evaluationResult.replyText.includes("HIGH") ? "HIGH" : evaluationResult.replyText.includes("LOW") ? "LOW" : "MEDIUM",
+              summary: evaluationResult.replyText
+            };
           }
 
-          console.log(`✨ Priority Engine Determined: [${detectedPriority}] for candidate ${currentState.name}`);
+          // 3. Update application state variables
+          currentState.education = parsedData.education || userMessage.trim();
+          let detectedPriority = parsedData.priority ? parsedData.priority.toUpperCase() : "MEDIUM";
+          let finalSummary = parsedData.summary || "Profile evaluation completed.";
 
-          // E. Dispatch parameters to the Apps Script with priority included
+          console.log(`✨ Optimization Engine Success! Priority: [${detectedPriority}] | Ed: [${currentState.education}]`);
+
+          // 4. Dispatch parameters to the Apps Script
           await sendToGoogleSheets(
             from, 
             currentState.name, 
             currentState.education, 
-            candidateSummary, 
+            finalSummary, 
             detectedPriority
           );
           
           botResponseText = "Thank you so much! Your application profile details have been securely logged into our system. Our HR team will reach out within 24 hours. Have a wonderful day!";
           currentState.stage = "Closed";
+
         } catch (error) {
-          console.error("🚨 Backend Extraction Error:", error.message);
+          console.error("🚨 Optimized Backend Extraction Error:", error.message);
           botResponseText = "Thank you! Your details have been submitted.";
           currentState.stage = "Closed";
         }
