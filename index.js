@@ -86,43 +86,12 @@ async function askGemini(userMessage) {
   }
 }
 
-// Helper: Generate chat summary with explicit scoring rules context
-async function generateChatSummary(chatHistoryArray) {
-  if (!chatHistoryArray || chatHistoryArray.length === 0) return "No conversation log available.";
-
-  const formattedTranscript = chatHistoryArray
-    .map(msg => `${msg.role === "user" ? "Candidate" : "Bot"}: ${msg.text}`)
-    .join("\n");
-
-  // CRITICAL FIX: We inject both the scoring rules AND the summary format instructions
-  const payloadMessage = `
-${process.env.SYSTEM_PROMPT}
-
-=========================================
-SCORING TASK INSTRUCTIONS:
-${process.env.SUMMARY_PROMPT}
-
-TRANSCRIPT TO EVALUATE:
-${formattedTranscript}
-`;
-
-  try {
-    console.log("🧠 Generating applicant profile summary with full priority rules context...");
-    const { replyText } = await askGemini(payloadMessage);
-    return replyText.trim();
-  } catch (err) {
-    console.warn("⚠️ Summary generation failed. Using fallback.");
-    return "Profile registration completed successfully.";
-  }
-}
-
-// Helper: Send data to Google Sheets (Updated Payload Structure)
+// Helper: Send data to Google Sheets
 async function sendToGoogleSheets(phone, name, education, chatSummary, priority) {
   try {
     const url = process.env.GOOGLE_SHEET_URL;
     if (!url) return console.warn("⚠️ GOOGLE_SHEET_URL missing.");
     
-    // We must explicitly pass 'priority' in the body object
     await axios.post(url, {
       type: "lead",
       phone: phone, 
@@ -226,7 +195,9 @@ app.post('/webhook', async (req, res) => {
     let outputTokens = 0;
     let responseTimeMs = 0;
 
-    // Stage 1: Collect name
+    // ==========================================
+    // STAGE 1: Collect Name
+    // ==========================================
     if (currentState.stage === 1) {
       const classificationPrompt = `You are a strict classifier. A user filling out a job application was asked for their full name. Their response: "${userMessage}".
       Classify into exactly one category:
@@ -244,26 +215,54 @@ app.post('/webhook', async (req, res) => {
       responseTimeMs += result.responseTimeMs;
 
       if (stage1Class === "CANCEL") {
-
         currentState.stage = 0;
         currentState.status = "Closed";
         botResponseText = "No problem at all! I have stopped the application process. Feel free to reach out whenever you're ready.";
       } else if (stage1Class === "QUESTION") {
         const answerResult = await askGemini(`You are an HR assistant. A job applicant asked this during the application process: "${userMessage}". Answer helpfully, then remind them to please provide their full name to continue.`);
         botResponseText = answerResult.replyText;
-        // Stage stays at 1
       } else {
         currentState.name = userMessage;
         currentState.stage = 2;
         botResponseText = "Got it! And what is your highest educational qualification? (e.g., +2 Pass, Bachelor's in BBA, BBS, etc.)";
       }
 
-} else {
-        // ANSWER — Process and clean data
+    // ==========================================
+    // STAGE 2: Collect Education & Score Priority (Optimized)
+    // ==========================================
+    } else if (currentState.stage === 2) {
+      const classificationPrompt = `You are a strict single-word classifier. Nothing else.
+
+      A job applicant was asked: "What is your highest educational qualification?"
+      Their reply was: "${userMessage}"
+
+      Your job:
+      - If their reply is ONLY stating a degree or education level (like "BBA", "MBBS", "+2", "Bachelor", "Masters", "SLC pass"), output: ANSWER
+      - If their reply contains ANY question mark, doubt, concern, or asks if something is acceptable (like "is this okay?", "I have MBBS but not management, is that fine?", "does this count?"), output: QUESTION  
+      - If they want to stop or cancel, output: CANCEL
+      
+      STRICT RULES:
+      - Output exactly one word only
+      - No punctuation
+      - No explanation
+      - No extra words
+      - Just one of these three: ANSWER, QUESTION, or CANCEL`;
+
+      const classResult = await askGemini(classificationPrompt);
+      const classification = classResult.replyText.trim().toUpperCase().split(/\s+/)[0];
+
+      if (classification === "CANCEL") {
+        currentState.stage = 0;
+        currentState.status = "Closed";
+        botResponseText = "No problem at all! I have stopped the application process. Feel free to reach out whenever you're ready.";
+      } else if (classification === "QUESTION") {
+        const answerPrompt = `You are an HR assistant. A job applicant asked this question about their qualification during an application: "${userMessage}". Answer their concern helpfully and honestly based on the job details you know. At the end of your answer, remind them to please provide their highest educational qualification to continue their application.`;
+        const answerResult = await askGemini(answerPrompt);
+        botResponseText = answerResult.replyText;
+      } else {
         console.log(`🎯 Funnel complete for: ${from}. Running optimized single-call extraction...`);
 
         try {
-          // 1. Build a combined instruction prompt so we only hit the API ONCE
           const formattedTranscript = currentState.history
             .map(msg => `${msg.role === "user" ? "Candidate" : "Bot"}: ${msg.text}`)
             .join("\n");
@@ -286,18 +285,15 @@ TRANSCRIPT TO EVALUATE:
 ${formattedTranscript}
 `;
 
-          // 2. Make a single API call instead of multiple stacked requests
           console.log("🧠 Executing combined token-saving evaluation call...");
           const evaluationResult = await askGemini(combinedEvaluationPrompt);
           
           let parsedData;
           try {
-            // Extract code block content if Gemini wraps it in markdown ```json
             let cleanJsonText = evaluationResult.replyText.replace(/```json|```/g, "").trim();
             parsedData = JSON.parse(cleanJsonText);
           } catch (jsonErr) {
             console.warn("⚠️ JSON parse failed, running regex fallback parsing...");
-            // Fallback parsing if JSON structure gets distorted
             parsedData = {
               education: userMessage.trim().substring(0, 30),
               priority: evaluationResult.replyText.includes("HIGH") ? "HIGH" : evaluationResult.replyText.includes("LOW") ? "LOW" : "MEDIUM",
@@ -305,14 +301,12 @@ ${formattedTranscript}
             };
           }
 
-          // 3. Update application state variables
           currentState.education = parsedData.education || userMessage.trim();
           let detectedPriority = parsedData.priority ? parsedData.priority.toUpperCase() : "MEDIUM";
           let finalSummary = parsedData.summary || "Profile evaluation completed.";
 
           console.log(`✨ Optimization Engine Success! Priority: [${detectedPriority}] | Ed: [${currentState.education}]`);
 
-          // 4. Dispatch parameters to the Apps Script
           await sendToGoogleSheets(
             from, 
             currentState.name, 
@@ -330,7 +324,10 @@ ${formattedTranscript}
           currentState.stage = "Closed";
         }
       }
-    // Stage 0: Normal conversation
+
+    // ==========================================
+    // STAGE 0: Normal Conversation
+    // ==========================================
     } else {
       const result = await askGemini(userMessage);
       botResponseText = result.replyText;
