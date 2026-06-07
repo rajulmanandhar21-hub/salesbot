@@ -106,17 +106,22 @@ async function generateChatSummary(chatHistoryArray) {
   }
 }
 
-// Helper: Send data to Google Sheets (leads)
-async function sendToGoogleSheets(phone, name, education, chatSummary) {
+// Helper: Send data to Google Sheets (Updated Payload Structure)
+async function sendToGoogleSheets(phone, name, education, chatSummary, priority) {
   try {
     const url = process.env.GOOGLE_SHEET_URL;
     if (!url) return console.warn("⚠️ GOOGLE_SHEET_URL missing.");
+    
+    // We must explicitly pass 'priority' in the body object
     await axios.post(url, {
       type: "lead",
-      phone, name, education,
+      phone: phone, 
+      name: name, 
+      education: education,
+      priority: priority, 
       summary: chatSummary
     });
-    console.log(`📊 Lead logged for: ${phone}`);
+    console.log(`📊 Lead logged with priority [${priority}] for: ${phone}`);
   } catch (error) {
     console.error("❌ Failed to push lead to Google Sheets:", error.message);
   }
@@ -276,33 +281,41 @@ app.post('/webhook', async (req, res) => {
         botResponseText = answerResult.replyText;
 
       } else {
-        // ANSWER — save and complete the funnel
-        currentState.education = userMessage.trim();
-        console.log(`🎯 Funnel complete for: ${from}. Parsing priority rating...`);
+        // ANSWER — Process and clean data
+        console.log(`🎯 Funnel complete for: ${from}. Parsing fields...`);
 
         try {
-          // 1. Run the updated Summary Prompt via Gemini
+          // A. Clean up the qualification string so it isn't a massive sentence
+          const cleanEdPrompt = `Extract ONLY the education degree/qualification level from this text. Keep it to 1-3 words max (e.g., "BBA Finance", "+2 Commerce", "BBS"). Text: "${userMessage}"`;
+          const edResult = await askGemini(cleanEdPrompt);
+          currentState.education = edResult.replyText.trim();
+
+          // B. Run the updated Summary Prompt via Gemini to evaluate priority
           let candidateSummary = await generateChatSummary(currentState.history);
           
-          // 2. Initialize default priority baseline
+          // C. Initialize default priority baseline
           let detectedPriority = "MEDIUM"; 
 
-          // 3. Regular expression to look for the system prompt tag
+          // D. Regular expression to look for the system prompt tag [PRIORITY: HIGH]
           const priorityRegex = /\[PRIORITY:\s*(HIGH|MEDIUM|LOW)\]/i;
           const match = candidateSummary.match(priorityRegex);
           
           if (match && match[1]) {
-            // Extract "HIGH", "MEDIUM", or "LOW" from group 1 capture
             detectedPriority = match[1].toUpperCase(); 
-            
-            // Clean up the summary so the tag itself doesn't show up in the spreadsheet cell text
+            // Strip the priority bracket completely out of the text block summary
             candidateSummary = candidateSummary.replace(priorityRegex, "").trim();
           }
 
           console.log(`✨ Priority Engine Determined: [${detectedPriority}] for candidate ${currentState.name}`);
 
-          // 4. Dispatch the payload out to your Google Apps Script Webhook
-          await sendToGoogleSheets(from, currentState.name, currentState.education, candidateSummary, detectedPriority);
+          // E. Dispatch parameters to the Apps Script with priority included
+          await sendToGoogleSheets(
+            from, 
+            currentState.name, 
+            currentState.education, 
+            candidateSummary, 
+            detectedPriority
+          );
           
           botResponseText = "Thank you so much! Your application profile details have been securely logged into our system. Our HR team will reach out within 24 hours. Have a wonderful day!";
           currentState.stage = "Closed";
