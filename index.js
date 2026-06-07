@@ -231,18 +231,46 @@ app.post('/webhook', async (req, res) => {
 
     // Stage 2: Collect education
     } else if (currentState.stage === 2) {
-      currentState.education = userMessage.trim();
-      console.log(`🎯 Funnel complete for: ${from}`);
+      // Classify if user is answering the question or asking something
+      const classificationPrompt = `The user is filling out a job application and was asked for their highest educational qualification. They responded: "${userMessage}". 
+      
+      Classify their response into exactly one of these three categories:
+      - "ANSWER" → if they are clearly stating their qualification (e.g. "BBA", "MBBS", "+2 pass", "Bachelor in BBS")
+      - "QUESTION" → if they are asking something or expressing a concern about their qualification (e.g. "is MBBS okay?", "I don't have a management degree, is that fine?", "does my degree qualify?")
+      - "CANCEL" → if they want to stop or back out
+      
+      Reply with only one word: ANSWER, QUESTION, or CANCEL.`;
 
-      try {
-        const candidateSummary = await generateChatSummary(currentState.history);
-        await sendToGoogleSheets(from, currentState.name, currentState.education, candidateSummary);
-        botResponseText = "Thank you so much! Your application profile details have been securely logged into our system. Our HR team will reach out within 24 hours. Have a wonderful day!";
-        currentState.stage = "Closed";
-      } catch (error) {
-        console.error("🚨 Stage 2 error:", error.message);
-        botResponseText = "Thank you! Your details have been submitted.";
-        currentState.stage = "Closed";
+      const classResult = await askGemini(classificationPrompt);
+      const classification = classResult.replyText.trim().toUpperCase();
+
+      if (classification.includes("CANCEL")) {
+        currentState.stage = 0;
+        currentState.status = "Closed";
+        botResponseText = "No problem at all! I have stopped the application process. Feel free to reach out whenever you're ready.";
+
+      } else if (classification.includes("QUESTION")) {
+        // Answer their concern using Gemini but stay in Stage 2
+        const answerPrompt = `You are an HR assistant. A job applicant asked this question about their qualification during an application: "${userMessage}". Answer their concern helpfully and honestly based on the job details you know. At the end of your answer, remind them to please provide their highest educational qualification to continue their application.`;
+        const answerResult = await askGemini(answerPrompt);
+        botResponseText = answerResult.replyText;
+        // Stage stays at 2 — we're still waiting for their qualification
+
+      } else {
+        // ANSWER — save and complete the funnel
+        currentState.education = userMessage.trim();
+        console.log(`🎯 Funnel complete for: ${from}`);
+
+        try {
+          const candidateSummary = await generateChatSummary(currentState.history);
+          await sendToGoogleSheets(from, currentState.name, currentState.education, candidateSummary);
+          botResponseText = "Thank you so much! Your application profile details have been securely logged into our system. Our HR team will reach out within 24 hours. Have a wonderful day!";
+          currentState.stage = "Closed";
+        } catch (error) {
+          console.error("🚨 Stage 2 error:", error.message);
+          botResponseText = "Thank you! Your details have been submitted.";
+          currentState.stage = "Closed";
+        }
       }
 
     // Stage 0: Normal conversation
