@@ -230,37 +230,44 @@ app.post('/webhook', async (req, res) => {
     // ==========================================
     // STAGE 2: Collect Education & Score Priority (Optimized)
     // ==========================================
+   // ==========================================
+    // STAGE 2: Collect Education & Score Priority (Fault-Tolerant)
+    // ==========================================
     } else if (currentState.stage === 2) {
-      const classificationPrompt = `You are a strict single-word classifier. Nothing else.
+      let classification = "ANSWER"; // Safe default baseline
 
-      A job applicant was asked: "What is your highest educational qualification?"
-      Their reply was: "${userMessage}"
+      try {
+        const classificationPrompt = `You are a strict single-word classifier. Nothing else.
+        A job applicant was asked: "What is your highest educational qualification?"
+        Their reply was: "${userMessage}"
+        Your job:
+        - If their reply is ONLY stating a degree or education level, output: ANSWER
+        - If their reply contains ANY question mark or doubt, output: QUESTION  
+        - If they want to stop or cancel, output: CANCEL
+        STRICT RULES: Output exactly one word only.`;
 
-      Your job:
-      - If their reply is ONLY stating a degree or education level (like "BBA", "MBBS", "+2", "Bachelor", "Masters", "SLC pass"), output: ANSWER
-      - If their reply contains ANY question mark, doubt, concern, or asks if something is acceptable (like "is this okay?", "I have MBBS but not management, is that fine?", "does this count?"), output: QUESTION  
-      - If they want to stop or cancel, output: CANCEL
-      
-      STRICT RULES:
-      - Output exactly one word only
-      - No punctuation
-      - No explanation
-      - No extra words
-      - Just one of these three: ANSWER, QUESTION, or CANCEL`;
-
-      const classResult = await askGemini(classificationPrompt);
-      const classification = classResult.replyText.trim().toUpperCase().split(/\s+/)[0];
+        console.log("🔍 Classifying Stage 2 message...");
+        const classResult = await askGemini(classificationPrompt);
+        classification = classResult.replyText.trim().toUpperCase().split(/\s+/)[0];
+      } catch (classError) {
+        console.warn("⚠️ Classification API failed due to Rate Limits. Defaulting to ANSWER to prevent freeze.");
+        classification = "ANSWER"; 
+      }
 
       if (classification === "CANCEL") {
         currentState.stage = 0;
         currentState.status = "Closed";
         botResponseText = "No problem at all! I have stopped the application process. Feel free to reach out whenever you're ready.";
       } else if (classification === "QUESTION") {
-        const answerPrompt = `You are an HR assistant. A job applicant asked this question about their qualification during an application: "${userMessage}". Answer their concern helpfully and honestly based on the job details you know. At the end of your answer, remind them to please provide their highest educational qualification to continue their application.`;
-        const answerResult = await askGemini(answerPrompt);
-        botResponseText = answerResult.replyText;
+        try {
+          const answerPrompt = `You are an HR assistant. A job applicant asked this question about their qualification during an application: "${userMessage}". Answer their concern helpfully and honestly based on the job details you know. At the end of your answer, remind them to please provide their highest educational qualification to continue their application.`;
+          const answerResult = await askGemini(answerPrompt);
+          botResponseText = answerResult.replyText;
+        } catch (error) {
+          botResponseText = "I received your question, but our system is currently experiencing a minor delay. Could you please state your highest qualification directly so we can process your application details?";
+        }
       } else {
-        console.log(`🎯 Funnel complete for: ${from}. Running optimized single-call extraction...`);
+        console.log(`🎯 Funnel complete for: ${from}. Running evaluation pipeline...`);
 
         try {
           const formattedTranscript = currentState.history
@@ -269,23 +276,20 @@ app.post('/webhook', async (req, res) => {
 
           const combinedEvaluationPrompt = `
 ${process.env.SYSTEM_PROMPT}
-
 =========================================
 EVALUATION TASK INSTRUCTIONS:
 You are an internal HR data assistant. Analyze the transcript below and output exactly three things formatted precisely as JSON text. 
-
 Expected JSON format:
 {
   "education": "1-3 words extraction of highest degree (e.g. BBA Finance, +2 Pass)",
   "priority": "HIGH, MEDIUM, or LOW based on the system criteria",
   "summary": "Your concise 2-sentence professional summary."
 }
-
 TRANSCRIPT TO EVALUATE:
 ${formattedTranscript}
 `;
 
-          console.log("🧠 Executing combined token-saving evaluation call...");
+          console.log("🧠 Executing unified evaluation call...");
           const evaluationResult = await askGemini(combinedEvaluationPrompt);
           
           let parsedData;
@@ -293,11 +297,11 @@ ${formattedTranscript}
             let cleanJsonText = evaluationResult.replyText.replace(/```json|```/g, "").trim();
             parsedData = JSON.parse(cleanJsonText);
           } catch (jsonErr) {
-            console.warn("⚠️ JSON parse failed, running regex fallback parsing...");
+            console.warn("⚠️ JSON parse failed, running text matching fallback...");
             parsedData = {
               education: userMessage.trim().substring(0, 30),
               priority: evaluationResult.replyText.includes("HIGH") ? "HIGH" : evaluationResult.replyText.includes("LOW") ? "LOW" : "MEDIUM",
-              summary: evaluationResult.replyText
+              summary: "Profile submitted via automated text fallback."
             };
           }
 
@@ -305,26 +309,30 @@ ${formattedTranscript}
           let detectedPriority = parsedData.priority ? parsedData.priority.toUpperCase() : "MEDIUM";
           let finalSummary = parsedData.summary || "Profile evaluation completed.";
 
-          console.log(`✨ Optimization Engine Success! Priority: [${detectedPriority}] | Ed: [${currentState.education}]`);
+          console.log(`✨ Priority Engine Determined: [${detectedPriority}]`);
 
-          await sendToGoogleSheets(
-            from, 
-            currentState.name, 
-            currentState.education, 
-            finalSummary, 
-            detectedPriority
-          );
+          // Deliver data directly to your Sheet layout
+          await sendToGoogleSheets(from, currentState.name, currentState.education, finalSummary, detectedPriority);
           
           botResponseText = "Thank you so much! Your application profile details have been securely logged into our system. Our HR team will reach out within 24 hours. Have a wonderful day!";
           currentState.stage = "Closed";
 
         } catch (error) {
-          console.error("🚨 Optimized Backend Extraction Error:", error.message);
-          botResponseText = "Thank you! Your details have been submitted.";
+          console.error("🚨 API Limit Hit During Summary Evaluation! Running Safeguard Bypass...", error.message);
+          
+          // Safeguard Bypass: Extract data locally from memory variables instead of crashing
+          let fallbackEducation = userMessage.length > 25 ? "Provided Profile Details" : userMessage.trim();
+          let fallbackPriority = "MEDIUM"; // Baseline priority
+          let fallbackSummary = "Application logged via rate-limit backup safety engine.";
+
+          console.log(`🛡️ Safeguard Activated! Pushing fallback profile for ${currentState.name}`);
+
+          await sendToGoogleSheets(from, currentState.name, fallbackEducation, fallbackSummary, fallbackPriority);
+
+          botResponseText = "Thank you! Your details have been successfully received and submitted to our hiring pipeline. Our HR team will get in touch with you shortly.";
           currentState.stage = "Closed";
         }
       }
-
     // ==========================================
     // STAGE 0: Normal Conversation
     // ==========================================
