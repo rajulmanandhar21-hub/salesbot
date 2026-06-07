@@ -86,7 +86,7 @@ async function askGemini(userMessage) {
   }
 }
 
-// Helper: Generate chat summary
+// Helper: Generate chat summary with explicit scoring rules context
 async function generateChatSummary(chatHistoryArray) {
   if (!chatHistoryArray || chatHistoryArray.length === 0) return "No conversation log available.";
 
@@ -94,10 +94,20 @@ async function generateChatSummary(chatHistoryArray) {
     .map(msg => `${msg.role === "user" ? "Candidate" : "Bot"}: ${msg.text}`)
     .join("\n");
 
-  const payloadMessage = `${process.env.SUMMARY_PROMPT}\n\nTRANSCRIPT TO EVALUATE:\n${formattedTranscript}`;
+  // CRITICAL FIX: We inject both the scoring rules AND the summary format instructions
+  const payloadMessage = `
+${process.env.SYSTEM_PROMPT}
+
+=========================================
+SCORING TASK INSTRUCTIONS:
+${process.env.SUMMARY_PROMPT}
+
+TRANSCRIPT TO EVALUATE:
+${formattedTranscript}
+`;
 
   try {
-    console.log("🧠 Generating applicant profile summary...");
+    console.log("🧠 Generating applicant profile summary with full priority rules context...");
     const { replyText } = await askGemini(payloadMessage);
     return replyText.trim();
   } catch (err) {
