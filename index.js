@@ -213,16 +213,30 @@ app.post('/webhook', async (req, res) => {
 
     // Stage 1: Collect name
     if (currentState.stage === 1) {
-      const classificationPrompt = `The user is filling out a job application form and was asked for their name. They responded: "${userMessage}". If they want to cancel or back out, reply "CANCEL". Otherwise reply "CONTINUE".`;
+      const classificationPrompt = `You are a strict classifier. A user filling out a job application was asked for their full name. Their response: "${userMessage}".
+      Classify into exactly one category:
+      - CANCEL: if they want to stop, back out, or are not interested
+      - QUESTION: if they are asking something or expressing confusion
+      - NAME: if they are providing their name
+      
+      Rules:
+      - Reply with only the single word: CANCEL, QUESTION, or NAME
+      - No punctuation, no explanation, nothing else`;
       const result = await askGemini(classificationPrompt);
+      const stage1Class = result.replyText.trim().toUpperCase().split(/\s+/)[0];
       inputTokens += result.inputTokens;
       outputTokens += result.outputTokens;
       responseTimeMs += result.responseTimeMs;
 
-      if (result.replyText.includes("CANCEL")) {
+      if (stage1Class === "CANCEL") {
+
         currentState.stage = 0;
         currentState.status = "Closed";
         botResponseText = "No problem at all! I have stopped the application process. Feel free to reach out whenever you're ready.";
+      } else if (stage1Class === "QUESTION") {
+        const answerResult = await askGemini(`You are an HR assistant. A job applicant asked this during the application process: "${userMessage}". Answer helpfully, then remind them to please provide their full name to continue.`);
+        botResponseText = answerResult.replyText;
+        // Stage stays at 1
       } else {
         currentState.name = userMessage;
         currentState.stage = 2;
@@ -242,14 +256,15 @@ app.post('/webhook', async (req, res) => {
       Reply with only one word: ANSWER, QUESTION, or CANCEL.`;
 
       const classResult = await askGemini(classificationPrompt);
-      const classification = classResult.replyText.trim().toUpperCase();
+      const classification = classResult.replyText.trim().toUpperCase().split(/\s+/)[0];
 
-      if (classification.includes("CANCEL")) {
+      if (classification === "CANCEL") {
         currentState.stage = 0;
         currentState.status = "Closed";
         botResponseText = "No problem at all! I have stopped the application process. Feel free to reach out whenever you're ready.";
 
-      } else if (classification.includes("QUESTION")) {
+      } else if (classification === "QUESTION") {
+
         // Answer their concern using Gemini but stay in Stage 2
         const answerPrompt = `You are an HR assistant. A job applicant asked this question about their qualification during an application: "${userMessage}". Answer their concern helpfully and honestly based on the job details you know. At the end of your answer, remind them to please provide their highest educational qualification to continue their application.`;
         const answerResult = await askGemini(answerPrompt);
