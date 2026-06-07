@@ -246,14 +246,22 @@ app.post('/webhook', async (req, res) => {
     // Stage 2: Collect education
     } else if (currentState.stage === 2) {
       // Classify if user is answering the question or asking something
-      const classificationPrompt = `The user is filling out a job application and was asked for their highest educational qualification. They responded: "${userMessage}". 
+      const classificationPrompt = `You are a strict single-word classifier. Nothing else.
+
+      A job applicant was asked: "What is your highest educational qualification?"
+      Their reply was: "${userMessage}"
+
+      Your job:
+      - If their reply is ONLY stating a degree or education level (like "BBA", "MBBS", "+2", "Bachelor", "Masters", "SLC pass"), output: ANSWER
+      - If their reply contains ANY question mark, doubt, concern, or asks if something is acceptable (like "is this okay?", "I have MBBS but not management, is that fine?", "does this count?"), output: QUESTION  
+      - If they want to stop or cancel, output: CANCEL
       
-      Classify their response into exactly one of these three categories:
-      - "ANSWER" → if they are clearly stating their qualification (e.g. "BBA", "MBBS", "+2 pass", "Bachelor in BBS")
-      - "QUESTION" → if they are asking something or expressing a concern about their qualification (e.g. "is MBBS okay?", "I don't have a management degree, is that fine?", "does my degree qualify?")
-      - "CANCEL" → if they want to stop or back out
-      
-      Reply with only one word: ANSWER, QUESTION, or CANCEL.`;
+      STRICT RULES:
+      - Output exactly one word only
+      - No punctuation
+      - No explanation
+      - No extra words
+      - Just one of these three: ANSWER, QUESTION, or CANCEL`;
 
       const classResult = await askGemini(classificationPrompt);
       const classification = classResult.replyText.trim().toUpperCase().split(/\s+/)[0];
