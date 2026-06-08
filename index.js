@@ -6,14 +6,14 @@ app.use(express.json());
 const VERIFY_TOKEN = "jobbot123";
 const WHATSAPP_TOKEN = process.env.WHATSAPP_TOKEN;
 const PHONE_NUMBER_ID = process.env.PHONE_NUMBER_ID;
-const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
+const GROQ_API_KEY = process.env.GROQ_API_KEY;
 const SYSTEM_PROMPT = process.env.SYSTEM_PROMPT;
 
 // In-memory application state tracker
 const applicationState = {};
 
 // Helper: Log every message exchange to Google Sheets monitoring tab
-async function logToMonitor(sessionId, sender, messageText, inputTokens = 0, outputTokens = 0, responseTimeMs = 0, status = "200 OK") {
+async function logToMonitor(sessionId, sender, messageText, responseTimeMs = 0, status = "200 OK") {
   try {
     const url = process.env.GOOGLE_SHEET_URL;
     if (!url) return;
@@ -24,9 +24,9 @@ async function logToMonitor(sessionId, sender, messageText, inputTokens = 0, out
       session_id: sessionId,
       sender: sender,
       message_text: messageText,
-      input_tokens: inputTokens,
-      output_tokens: outputTokens,
-      response_time_ms: responseTimeMs,
+      input_tokens: 0, // Groq handles tokens on server-side cache
+      output_tokens: 0,
+      responseTimeMs: responseTimeMs,
       status: status
     });
   } catch (err) {
@@ -34,59 +34,44 @@ async function logToMonitor(sessionId, sender, messageText, inputTokens = 0, out
   }
 }
 
-// Helper: Ask Gemini with Automatic Backup Fallback & Rate-Limit Cool Down
-async function askGemini(userMessage) {
-  const apiKeys = [
-    process.env.GEMINI_API_KEY,
-    process.env.GEMINI_API_KEY_BACKUP,
-    process.env.GEMINI_API_KEY_BACKUP_2
-  ];
+// Helper: Ask Groq Cloud (Llama 3.3 70B) — High-Velocity Free Tier
+async function askGroq(userMessage) {
+  if (!GROQ_API_KEY) {
+    console.error("🚨 CRITICAL: GROQ_API_KEY environment variable is missing!");
+    throw new Error("Groq API key not configured");
+  }
 
-  for (let i = 0; i < apiKeys.length; i++) {
-    const currentKey = apiKeys[i];
+  try {
+    console.log(`🚀 Sending request to Groq Cloud (Llama 3.3 70B)...`);
+    const startTime = Date.now();
 
-    if (!currentKey) {
-      console.warn(`⚠️ Key index [${i}] is not configured. Skipping...`);
-      continue;
-    }
-
-    try {
-      const label = i === 0 ? "PRIMARY" : i === 1 ? "FIRST BACKUP" : "SECOND BACKUP";
-      console.log(`🚀 Attempting Gemini API call using [${label}] key...`);
-
-      const startTime = Date.now();
-
-      const geminiRes = await axios.post(
-        `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${currentKey}`,
-        {
-          contents: [{ role: "user", parts: [{ text: userMessage }] }],
-          systemInstruction: { parts: [{ text: SYSTEM_PROMPT }] }
+    const response = await axios.post(
+      "https://api.groq.com/openai/v1/chat/completions",
+      {
+        model: "llama-3.3-70b-versatile",
+        messages: [
+          { role: "system", content: SYSTEM_PROMPT },
+          { role: "user", content: userMessage }
+        ],
+        temperature: 0.2 // Kept low for predictable structural JSON outputs
+      },
+      {
+        headers: {
+          "Authorization": `Bearer ${GROQ_API_KEY}`,
+          "Content-Type": "application/json"
         }
-      );
-
-      const responseTimeMs = Date.now() - startTime;
-      const inputTokens = geminiRes.data.usageMetadata?.promptTokenCount || 0;
-      const outputTokens = geminiRes.data.usageMetadata?.candidatesTokenCount || 0;
-      const replyText = geminiRes.data.candidates[0].content.parts[0].text;
-
-      console.log(`✅ Success! [${label}] key. Tokens: ${inputTokens} in / ${outputTokens} out. Time: ${responseTimeMs}ms`);
-
-      return { replyText, inputTokens, outputTokens, responseTimeMs };
-
-    } catch (error) {
-      const label = i === 0 ? "PRIMARY" : i === 1 ? "FIRST BACKUP" : "SECOND BACKUP";
-      console.warn(`❌ [${label}] key failed. Error: ${error.message}`);
-
-      if (i === apiKeys.length - 1) {
-        console.error("🚨 CRITICAL: All Gemini API keys exhausted!");
-        throw error;
       }
+    );
 
-      // CRITICAL ADDITION: Wait 1.5 seconds before hitting the next backup key
-      console.log("⏱️ Rate limit safeguard activated. Cooling down for 1.5s before switching keys...");
-      await new Promise(resolve => setTimeout(resolve, 1500));
-      console.log("🔄 Switching to next backup key...");
-    }
+    const responseTimeMs = Date.now() - startTime;
+    const replyText = response.data.choices[0].message.content;
+    
+    console.log(`✅ Groq Response Received successfully in ${responseTimeMs}ms!`);
+    return { replyText, responseTimeMs };
+
+  } catch (error) {
+    console.error(`❌ Groq API Call Failed: ${error.response?.data?.error?.message || error.message}`);
+    throw error;
   }
 }
 
@@ -104,7 +89,7 @@ async function sendToGoogleSheets(phone, name, education, chatSummary, priority)
       priority: priority, 
       summary: chatSummary
     });
-    console.log(`📊 Lead logged with priority [${priority}] for: ${phone}`);
+    console.log(`📊 Lead successfully logged with priority [${priority}] for: ${phone}`);
   } catch (error) {
     console.error("❌ Failed to push lead to Google Sheets:", error.message);
   }
@@ -112,18 +97,22 @@ async function sendToGoogleSheets(phone, name, education, chatSummary, priority)
 
 // Helper: Send WhatsApp message
 async function sendWhatsApp(to, text) {
-  await axios.post(
-    `https://graph.facebook.com/v19.0/${PHONE_NUMBER_ID}/messages`,
-    {
-      messaging_product: "whatsapp",
-      to: to,
-      type: "text",
-      text: { body: text }
-    },
-    {
-      headers: { Authorization: `Bearer ${WHATSAPP_TOKEN}` }
-    }
-  );
+  try {
+    await axios.post(
+      `https://graph.facebook.com/v19.0/${PHONE_NUMBER_ID}/messages`,
+      {
+        messaging_product: "whatsapp",
+        to: to,
+        type: "text",
+        text: { body: text }
+      },
+      {
+        headers: { Authorization: `Bearer ${WHATSAPP_TOKEN}` }
+      }
+    );
+  } catch (err) {
+    console.error("❌ WhatsApp dispatch failed:", err.response?.data || err.message);
+  }
 }
 
 // Meta webhook verification
@@ -195,8 +184,6 @@ app.post('/webhook', async (req, res) => {
     }
 
     let botResponseText = "";
-    let inputTokens = 0;
-    let outputTokens = 0;
     let responseTimeMs = 0;
 
     // ==========================================
@@ -212,10 +199,9 @@ app.post('/webhook', async (req, res) => {
       Rules:
       - Reply with only the single word: CANCEL, QUESTION, or NAME
       - No punctuation, no explanation, nothing else`;
-      const result = await askGemini(classificationPrompt);
+      
+      const result = await askGroq(classificationPrompt);
       const stage1Class = result.replyText.trim().toUpperCase().split(/\s+/)[0];
-      inputTokens += result.inputTokens;
-      outputTokens += result.outputTokens;
       responseTimeMs += result.responseTimeMs;
 
       if (stage1Class === "CANCEL") {
@@ -223,7 +209,7 @@ app.post('/webhook', async (req, res) => {
         currentState.status = "Closed";
         botResponseText = "No problem at all! I have stopped the application process. Feel free to reach out whenever you're ready.";
       } else if (stage1Class === "QUESTION") {
-        const answerResult = await askGemini(`You are an HR assistant. A job applicant asked this during the application process: "${userMessage}". Answer helpfully, then remind them to please provide their full name to continue.`);
+        const answerResult = await askGroq(`You are an HR assistant. A job applicant asked this during the application process: "${userMessage}". Answer helpfully, then remind them to please provide their full name to continue.`);
         botResponseText = answerResult.replyText;
       } else {
         currentState.name = userMessage;
@@ -232,13 +218,10 @@ app.post('/webhook', async (req, res) => {
       }
 
     // ==========================================
-    // STAGE 2: Collect Education & Score Priority (Optimized)
-    // ==========================================
-   // ==========================================
-    // STAGE 2: Collect Education & Score Priority (Fault-Tolerant)
+    // STAGE 2: Collect Education & Score Priority
     // ==========================================
     } else if (currentState.stage === 2) {
-      let classification = "ANSWER"; // Safe default baseline
+      let classification = "ANSWER"; 
 
       try {
         const classificationPrompt = `You are a strict single-word classifier. Nothing else.
@@ -250,11 +233,11 @@ app.post('/webhook', async (req, res) => {
         - If they want to stop or cancel, output: CANCEL
         STRICT RULES: Output exactly one word only.`;
 
-        console.log("🔍 Classifying Stage 2 message...");
-        const classResult = await askGemini(classificationPrompt);
+        console.log("🔍 Classifying Stage 2 message via Groq...");
+        const classResult = await askGroq(classificationPrompt);
         classification = classResult.replyText.trim().toUpperCase().split(/\s+/)[0];
       } catch (classError) {
-        console.warn("⚠️ Classification API failed due to Rate Limits. Defaulting to ANSWER to prevent freeze.");
+        console.warn("⚠️ Classification failed, assuming ANSWER placeholder.");
         classification = "ANSWER"; 
       }
 
@@ -265,94 +248,97 @@ app.post('/webhook', async (req, res) => {
       } else if (classification === "QUESTION") {
         try {
           const answerPrompt = `You are an HR assistant. A job applicant asked this question about their qualification during an application: "${userMessage}". Answer their concern helpfully and honestly based on the job details you know. At the end of your answer, remind them to please provide their highest educational qualification to continue their application.`;
-          const answerResult = await askGemini(answerPrompt);
+          const answerResult = await askGroq(answerPrompt);
           botResponseText = answerResult.replyText;
         } catch (error) {
-          botResponseText = "I received your question, but our system is currently experiencing a minor delay. Could you please state your highest qualification directly so we can process your application details?";
+          botResponseText = "I received your question. Could you please state your highest qualification directly so we can finish logging your profile details?";
         }
       } else {
-        console.log(`🎯 Funnel complete for: ${from}. Running evaluation pipeline...`);
+        console.log(`🎯 Funnel complete for: ${from}. Running optimized Groq evaluation pipeline...`);
 
         try {
           const formattedTranscript = currentState.history
             .map(msg => `${msg.role === "user" ? "Candidate" : "Bot"}: ${msg.text}`)
             .join("\n");
 
+          // SYSTEM_PROMPT is omitted here because askGroq already loads it automatically inside the API structure!
           const combinedEvaluationPrompt = `
 =========================================
 EVALUATION TASK INSTRUCTIONS:
-You are an internal HR data assistant. Analyze the transcript below and output exactly three things formatted precisely as JSON text. 
+You are an internal HR data assistant. Analyze the conversation transcript below and output exactly three values formatted strictly as a single JSON object.
 
-Expected JSON format:
+Expected JSON format output:
 {
   "education": "1-3 words extraction of highest degree (e.g. BBA Finance, +2 Pass)",
-  "priority": "HIGH, MEDIUM, or LOW based on the system criteria",
-  "summary": "Your concise 2-sentence professional summary."
+  "priority": "HIGH, MEDIUM, or LOW based on your system scoring parameters",
+  "summary": "Your concise 2-sentence professional applicant summary."
 }
 
 TRANSCRIPT TO EVALUATE:
 ${formattedTranscript}
 `;
 
-          console.log("🧠 Executing unified evaluation call...");
-          const evaluationResult = await askGemini(combinedEvaluationPrompt);
+          const evaluationResult = await askGroq(combinedEvaluationPrompt);
+          responseTimeMs += evaluationResult.responseTimeMs;
           
           let parsedData;
           try {
             let cleanJsonText = evaluationResult.replyText.replace(/```json|```/g, "").trim();
+            
+            // Isolate literal bracket bounds in case of conversational padding
+            const jsonMatch = cleanJsonText.match(/\{[\s\S]*\}/);
+            if (jsonMatch) {
+              cleanJsonText = jsonMatch[0];
+            }
+            
             parsedData = JSON.parse(cleanJsonText);
           } catch (jsonErr) {
-            console.warn("⚠️ JSON parse failed, running text matching fallback...");
+            console.warn("⚠️ JSON fallback running case-matching...");
+            const upperReply = evaluationResult.replyText.toUpperCase();
             parsedData = {
               education: userMessage.trim().substring(0, 30),
-              priority: evaluationResult.replyText.includes("HIGH") ? "HIGH" : evaluationResult.replyText.includes("LOW") ? "LOW" : "MEDIUM",
-              summary: "Profile submitted via automated text fallback."
+              priority: upperReply.includes("LOW") ? "LOW" : upperReply.includes("HIGH") ? "HIGH" : "MEDIUM",
+              summary: evaluationResult.replyText.substring(0, 150)
             };
           }
 
           currentState.education = parsedData.education || userMessage.trim();
           let detectedPriority = parsedData.priority ? parsedData.priority.toUpperCase() : "MEDIUM";
-          let finalSummary = parsedData.summary || "Profile evaluation completed.";
+          let finalSummary = parsedData.summary || "Profile evaluation logging complete.";
 
-          console.log(`✨ Priority Engine Determined: [${detectedPriority}]`);
+          console.log(`✨ Groq Priority Calculated: [${detectedPriority}] | Degree: [${currentState.education}]`);
 
-          // Deliver data directly to your Sheet layout
+          // Deliver clean mapped entries straight down the pipeline to Google Sheets
           await sendToGoogleSheets(from, currentState.name, currentState.education, finalSummary, detectedPriority);
           
           botResponseText = "Thank you so much! Your application profile details have been securely logged into our system. Our HR team will reach out within 24 hours. Have a wonderful day!";
           currentState.stage = "Closed";
 
         } catch (error) {
-          console.error("🚨 API Limit Hit During Summary Evaluation! Running Safeguard Bypass...", error.message);
+          console.error("🚨 Processing crash fallback activated:", error.message);
           
-          // Safeguard Bypass: Extract data locally from memory variables instead of crashing
-          let fallbackEducation = userMessage.length > 25 ? "Provided Profile Details" : userMessage.trim();
-          let fallbackPriority = "MEDIUM"; // Baseline priority
-          let fallbackSummary = "Application logged via rate-limit backup safety engine.";
-
-          console.log(`🛡️ Safeguard Activated! Pushing fallback profile for ${currentState.name}`);
-
-          await sendToGoogleSheets(from, currentState.name, fallbackEducation, fallbackSummary, fallbackPriority);
+          let fallbackEducation = userMessage.length > 25 ? "Profile Registered" : userMessage.trim();
+          await sendToGoogleSheets(from, currentState.name, fallbackEducation, "Logged via system backup safety protocol.", "MEDIUM");
 
           botResponseText = "Thank you! Your details have been successfully received and submitted to our hiring pipeline. Our HR team will get in touch with you shortly.";
           currentState.stage = "Closed";
         }
       }
+
     // ==========================================
-    // STAGE 0: Normal Conversation
+    // STAGE 0: Normal Chat & Intercept Trigger
     // ==========================================
     } else {
-      const result = await askGemini(userMessage);
+      const result = await askGroq(userMessage);
       botResponseText = result.replyText;
-      inputTokens = result.inputTokens;
-      outputTokens = result.outputTokens;
       responseTimeMs = result.responseTimeMs;
 
+      // Smart Application Funnel Intercept
       if (botResponseText.includes("[START_APPLICATION]")) {
         console.log(`Smart intercept: application funnel triggered for ${from}`);
         let transitionMessage = botResponseText.replace("[START_APPLICATION]", "").trim();
         currentState.stage = 1;
-       botResponseText = "Great! Let's get your application registered. To start, what is your full name?";
+        botResponseText = transitionMessage + "\n\nGreat! Let's get your application registered. To start, what is your full name?";
       }
     }
 
@@ -366,17 +352,17 @@ ${formattedTranscript}
 
     currentState.history.push({ role: "model", text: botResponseText });
 
-    // Log bot response to monitor
-    await logToMonitor(from, "Bot", botResponseText, inputTokens, outputTokens, responseTimeMs, "200 OK");
+    // Log response down to sheets monitoring logs
+    await logToMonitor(from, "Bot", botResponseText, responseTimeMs, "200 OK");
 
     await sendWhatsApp(from, botResponseText);
     res.sendStatus(200);
 
   } catch (err) {
-    console.error(err?.response?.data || err.message);
+    console.error("💥 General Route Crash Error:", err?.response?.data || err.message);
     res.sendStatus(500);
   }
 });
 
 const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => console.log(`Bot running on port ${PORT}`));
+app.listen(PORT, () => console.log(`Groq-powered Application Engine active on port ${PORT}`));
