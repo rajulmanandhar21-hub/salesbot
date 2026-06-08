@@ -34,7 +34,7 @@ async function logToMonitor(sessionId, sender, messageText, inputTokens = 0, out
   }
 }
 
-// Helper: Ask Gemini with Automatic Backup Fallback
+// Helper: Ask Gemini with Automatic Backup Fallback & Rate-Limit Cool Down
 async function askGemini(userMessage) {
   const apiKeys = [
     process.env.GEMINI_API_KEY,
@@ -81,6 +81,10 @@ async function askGemini(userMessage) {
         console.error("🚨 CRITICAL: All Gemini API keys exhausted!");
         throw error;
       }
+
+      // CRITICAL ADDITION: Wait 1.5 seconds before hitting the next backup key
+      console.log("⏱️ Rate limit safeguard activated. Cooling down for 1.5s before switching keys...");
+      await new Promise(resolve => setTimeout(resolve, 1500));
       console.log("🔄 Switching to next backup key...");
     }
   }
