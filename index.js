@@ -275,16 +275,17 @@ app.post('/webhook', async (req, res) => {
             .join("\n");
 
           const combinedEvaluationPrompt = `
-${process.env.SYSTEM_PROMPT}
 =========================================
 EVALUATION TASK INSTRUCTIONS:
 You are an internal HR data assistant. Analyze the transcript below and output exactly three things formatted precisely as JSON text. 
+
 Expected JSON format:
 {
   "education": "1-3 words extraction of highest degree (e.g. BBA Finance, +2 Pass)",
   "priority": "HIGH, MEDIUM, or LOW based on the system criteria",
   "summary": "Your concise 2-sentence professional summary."
 }
+
 TRANSCRIPT TO EVALUATE:
 ${formattedTranscript}
 `;
