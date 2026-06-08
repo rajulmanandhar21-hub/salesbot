@@ -75,17 +75,23 @@ async function askGroq(userMessage) {
   }
 }
 
-// Helper: Send data to Google Sheets
+// Helper: Send data to Google Sheets (Formula-Safe Sanitized)
 async function sendToGoogleSheets(phone, name, education, chatSummary, priority) {
   try {
     const url = process.env.GOOGLE_SHEET_URL;
     if (!url) return console.warn("⚠️ GOOGLE_SHEET_URL missing.");
     
+    // SAFEGUARD: Prevent Google Sheets from treating "+2" as a mathematical formula error
+    let safeEducation = education ? education.trim() : "";
+    if (safeEducation.startsWith('+') || safeEducation.startsWith('=')) {
+      safeEducation = `'${safeEducation}`; // Prepend single quote to force plain-text formatting
+    }
+    
     await axios.post(url, {
       type: "lead",
       phone: phone, 
       name: name, 
-      education: education,
+      education: safeEducation,
       priority: priority, 
       summary: chatSummary
     });
@@ -342,7 +348,30 @@ ${formattedTranscript}
       }
     }
 
-    // Global close intercept
+    // ✅ PASTE THIS NEW SECTION HERE:
+    // ==========================================
+    // CENTRALIZED OUTPUT CLEANER & INTERCEPTOR
+    // ==========================================
+    
+    // 1. Check for application triggers anywhere in the pipeline response
+    if (botResponseText.includes("[START_APPLICATION]")) {
+      botResponseText = botResponseText.replace("[START_APPLICATION]", "").trim();
+      
+      // Only append name prompt if we aren't already collecting info
+      if (currentState.stage === 0) {
+        console.log(`Smart intercept: Shifting ${from} to Stage 1 (Name Collection)`);
+        currentState.stage = 1;
+        
+        // Check if Llama already said something similar to avoid double greetings
+        if (!botResponseText.toLowerCase().includes("name") && !botResponseText.toLowerCase().includes("start")) {
+          botResponseText += "\n\nGreat! Let's get your application registered. To start, what is your full name?";
+        } else if (!botResponseText.toLowerCase().includes("full name")) {
+          botResponseText += "\n\nCould you please provide your full name?";
+        }
+      }
+    }
+
+    // 2. Clear out closing flags cleanly
     if (botResponseText.includes("[CLOSE_CONVERSATION]")) {
       console.log(`Close intercept triggered for ${from}`);
       botResponseText = botResponseText.replace("[CLOSE_CONVERSATION]", "").trim();
@@ -350,11 +379,16 @@ ${formattedTranscript}
       currentState.status = "Closed";
     }
 
+    // 3. Clean up generic markdown artifacts or awkward double spacing
+    botResponseText = botResponseText.replace(/\n{3,}/g, "\n\n").trim();
+
+    // Commit to conversation history logs
     currentState.history.push({ role: "model", text: botResponseText });
 
-    // Log response down to sheets monitoring logs
+    // Log complete response down to monitoring sheets tracking
     await logToMonitor(from, "Bot", botResponseText, responseTimeMs, "200 OK");
 
+    // Dispatch clear message payload to user's device
     await sendWhatsApp(from, botResponseText);
     res.sendStatus(200);
 
