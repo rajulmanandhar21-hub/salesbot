@@ -347,7 +347,7 @@ ${formattedTranscript}
         console.log(`Smart intercept: application funnel triggered for ${from}`);
         let transitionMessage = botResponseText.replace("[START_APPLICATION]", "").trim();
         currentState.stage = 1;
-        botResponseText = transitionMessage + "\n\nGreat! Let's get your application registered. To start, what is your full name?";
+       botResponseText = "Great! Let's get your application registered. To start, what is your full name?";
       }
     }
 
