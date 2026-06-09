@@ -24,7 +24,7 @@ async function logToMonitor(sessionId, channel, sender, messageText, responseTim
       session_id: sessionId,
       sender: sender,
       message_text: messageText,
-      input_tokens: 0, // Groq handles tokens on server-side cache
+      input_tokens: 0, 
       output_tokens: 0,
       responseTimeMs: responseTimeMs,
       status: status
@@ -34,7 +34,7 @@ async function logToMonitor(sessionId, channel, sender, messageText, responseTim
   }
 }
 
-// Helper: Ask Groq Cloud (Llama 3.3 70B) — High-Velocity Free Tier
+// Helper: Ask Groq Cloud (Llama 3.3 70B)
 async function askGroq(userMessage) {
   if (!GROQ_API_KEY) {
     console.error("🚨 CRITICAL: GROQ_API_KEY environment variable is missing!");
@@ -53,7 +53,7 @@ async function askGroq(userMessage) {
           { role: "system", content: SYSTEM_PROMPT },
           { role: "user", content: userMessage }
         ],
-        temperature: 0.2 // Kept low for predictable structural JSON outputs
+        temperature: 0.2 
       },
       {
         headers: {
@@ -81,7 +81,6 @@ async function sendToGoogleSheets(phone, name, education, chatSummary, priority,
     const url = process.env.GOOGLE_SCRIPT_URL || process.env.GOOGLE_SHEET_URL;
     if (!url) return console.warn("⚠️ Google Sheets routing URL environment variable missing.");
     
-    // SAFEGUARD: Prevent Google Sheets from treating "+2" as a mathematical formula error
     let safeEducation = education ? education.trim() : "";
     if (safeEducation.startsWith('+') || safeEducation.startsWith('=')) {
       safeEducation = `'${safeEducation}`; 
@@ -91,7 +90,7 @@ async function sendToGoogleSheets(phone, name, education, chatSummary, priority,
     
     await axios.post(url, {
       type: "lead",
-      channel: targetChannel, // Passes 'WhatsApp' or 'Messenger' cleanly to drive your Apps Script router
+      channel: targetChannel, 
       phone: phone, 
       name: name || "Unknown Candidate", 
       education: safeEducation || "Not Provided",
@@ -104,7 +103,7 @@ async function sendToGoogleSheets(phone, name, education, chatSummary, priority,
   }
 }
 
-// Helper: Send WhatsApp message (Cleaned up from old duplication dependencies)
+// Helper: Send WhatsApp message
 async function sendWhatsApp(to, text) {
   try {
     await axios.post(
@@ -160,9 +159,6 @@ app.post('/webhook', async (req, res) => {
     const entry = req.body.entry?.[0];
     if (!entry) return res.sendStatus(200);
 
-    // ==========================================
-    // CHANNEL DETECTION — WhatsApp vs Messenger
-    // ==========================================
     let userMessage, from, channel;
 
     const change = entry?.changes?.[0];
@@ -287,4 +283,38 @@ app.post('/webhook', async (req, res) => {
         botResponseText = "No problem at all! I have stopped the application process. Feel free to reach out whenever you're ready.";
       } else if (classification === "QUESTION") {
         try {
-          const answerPrompt = `You are an HR assistant. A job applicant asked this question about their qualification during an application: "${userMessage}". Answer their concern help
+          const answerPrompt = `You are an HR assistant. A job applicant asked this question about their qualification during an application: "${userMessage}". Answer their concern helpfully and honestly based on the job details you know. At the end of your answer, remind them to please provide their highest educational qualification to continue their application...`;
+          const answerResult = await askGroq(answerPrompt);
+          botResponseText = answerResult.replyText;
+        } catch (error) {
+          botResponseText = "I received your question. Could you please state your highest qualification directly so we can finish logging your profile details?";
+        }
+      } else {
+        console.log(`🎯 Funnel complete for: ${from}. Running optimized Groq evaluation pipeline...`);
+
+        try {
+          const formattedTranscript = currentState.history
+            .map(msg => `${msg.role === "user" ? "Candidate" : "Bot"}: ${msg.text}`)
+            .join("\n");
+
+          const combinedEvaluationPrompt = `
+=========================================
+EVALUATION TASK INSTRUCTIONS:
+You are an internal HR data assistant. Analyze the conversation transcript below and output exactly three values formatted strictly as a single JSON object.
+
+Expected JSON format output:
+{
+  "education": "1-3 words extraction of highest degree (e.g. BBA Finance, +2 Pass)",
+  "priority": "HIGH, MEDIUM, or LOW based on your system scoring parameters",
+  "summary": "Your concise 2-sentence professional applicant summary."
+}
+
+TRANSCRIPT TO EVALUATE:
+${formattedTranscript}
+`;
+
+          const evaluationResult = await askGroq(combinedEvaluationPrompt);
+          responseTimeMs += evaluationResult.responseTimeMs;
+          
+          let parsedData;
+          try {
