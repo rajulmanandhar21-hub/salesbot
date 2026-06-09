@@ -318,3 +318,101 @@ ${formattedTranscript}
           
           let parsedData;
           try {
+            let cleanJsonText = evaluationResult.replyText.replace(/```json|```/g, "").trim();
+            const jsonMatch = cleanJsonText.match(/\{[\s\S]*\}/);
+            if (jsonMatch) {
+              cleanJsonText = jsonMatch[0];
+            }
+            parsedData = JSON.parse(cleanJsonText);
+          } catch (jsonErr) {
+            console.warn("⚠️ JSON fallback running case-matching...");
+            const upperReply = evaluationResult.replyText.toUpperCase();
+            parsedData = {
+              education: userMessage.trim().substring(0, 30),
+              priority: upperReply.includes("LOW") ? "LOW" : upperReply.includes("HIGH") ? "HIGH" : "MEDIUM",
+              summary: evaluationResult.replyText.substring(0, 150)
+            };
+          }
+
+          currentState.education = parsedData.education || userMessage.trim();
+          let detectedPriority = parsedData.priority ? parsedData.priority.toUpperCase() : "MEDIUM";
+          let finalSummary = parsedData.summary || "Profile evaluation logging complete.";
+
+          console.log(`✨ Groq Priority Calculated: [${detectedPriority}] | Degree: [${currentState.education}]`);
+
+          // Deliver clean mapped entries straight down the pipeline to Google Sheets
+          await sendToGoogleSheets(from, currentState.name, currentState.education, finalSummary, detectedPriority, channel);
+          
+          botResponseText = "Thank you so much! Your application profile details have been securely logged into our system. Our HR team will reach out within 24 hours. Have a wonderful day!";
+          currentState.stage = 0; 
+
+        } catch (error) {
+          console.error("🚨 Processing crash fallback activated:", error.message);
+          let fallbackEducation = userMessage.length > 25 ? "Profile Registered" : userMessage.trim();
+          await sendToGoogleSheets(from, currentState.name, fallbackEducation, "Logged via system backup safety protocol.", "MEDIUM", channel);
+
+          botResponseText = "Thank you! Your details have been successfully received and submitted to our hiring pipeline. Our HR team will get in touch with you shortly.";
+          currentState.stage = 0;
+        }
+      }
+
+    // ==========================================
+    // STAGE 0: Normal Chat & Intercept Trigger
+    // ==========================================
+    } else {
+      const result = await askGroq(userMessage);
+      botResponseText = result.replyText;
+      responseTimeMs = result.responseTimeMs;
+    }
+
+    // ==========================================
+    // CENTRALIZED OUTPUT CLEANER & INTERCEPTOR
+    // ==========================================
+    
+    // 1. Check for application triggers anywhere in the pipeline response
+    if (botResponseText.includes("[START_APPLICATION]")) {
+      botResponseText = botResponseText.replace("[START_APPLICATION]", "").trim();
+      
+      if (currentState.stage === 0) {
+        console.log(`Smart intercept: Shifting ${from} to Stage 1 (Name Collection)`);
+        currentState.stage = 1;
+        botResponseText = "Great! Let's get your application registered. To start, what is your full name?";
+      }
+    }
+
+    // 2. Clear out closing flags cleanly
+    if (botResponseText.includes("[CLOSE_CONVERSATION]")) {
+      console.log(`Close intercept triggered for ${from}`);
+      botResponseText = botResponseText.replace("[CLOSE_CONVERSATION]", "").trim();
+      currentState.stage = 0;
+      currentState.status = "Closed";
+    }
+
+    // 3. Clean up generic markdown artifacts or awkward double spacing
+    botResponseText = botResponseText.replace(/\n{3,}/g, "\n\n").trim();
+
+    // Commit to conversation history logs
+    currentState.history.push({ role: "model", text: botResponseText });
+
+    // Log complete response down to monitoring sheets tracking
+    await logToMonitor(from, channel, "Bot", botResponseText, responseTimeMs, "200 OK");
+
+    // Dispatch clear message payload to user's device
+    if (channel === "Messenger") {
+      await sendMessenger(from, botResponseText);
+    } else {
+      await sendWhatsApp(from, botResponseText);
+    }
+    
+    return res.sendStatus(200);
+
+  } catch (err) {
+    console.error("💥 General Route Crash Error:", err?.response?.data || err.message);
+    if (!res.headersSent) {
+      res.sendStatus(500);
+    }
+  }
+});
+
+const PORT = process.env.PORT || 3000;
+app.listen(PORT, () => console.log(`Groq-powered Application Engine active on port ${PORT}`));
