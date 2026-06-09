@@ -101,9 +101,10 @@ async function sendToGoogleSheets(phone, name, education, chatSummary, priority)
   }
 }
 
-// Helper: Send WhatsApp message
+// Helper: Send WhatsApp message and auto-extract qualification data
 async function sendWhatsApp(to, text) {
   try {
+    // 1. Fire the actual text message to the user's phone via Meta Graph API
     await axios.post(
       `https://graph.facebook.com/v19.0/${PHONE_NUMBER_ID}/messages`,
       {
@@ -116,6 +117,44 @@ async function sendWhatsApp(to, text) {
         headers: { Authorization: `Bearer ${WHATSAPP_TOKEN}` }
       }
     );
+
+    // 2. 🎯 AUTOMATED LEAD TRIGGER SENSOR
+    // Intercepts the bot's closing confirmation message to run extraction background tasks
+    if (text.includes("securely logged") || text.includes("application profile")) {
+      try {
+        console.log(`📋 [LEAD DETECTION] Final text matched! Initializing Groq data harvest for: ${to}`);
+        
+        // Safely fetch your session cache history
+        const sessionState = applicationState[to];
+        const historyArray = sessionState ? sessionState.history : [];
+
+        // Invoke your background Groq structure analyzer model function
+        const structuredLeadData = await extractDataWithGroqJSON(historyArray);
+
+        const leadPayload = {
+          type: "lead", // Flags Apps Script parser router logic
+          channel: "whatsapp",
+          phone: to,
+          name: structuredLeadData.name || (sessionState ? sessionState.name : "Unknown"),
+          education: structuredLeadData.education || (sessionState ? sessionState.education : "Not Given"),
+          priority: structuredLeadData.priority || "HIGH",
+          summary: structuredLeadData.summary || "No automated data brief available."
+        };
+
+        // Post structured array straight to your spreadsheet deployment URL
+        const googleResponse = await axios.post(process.env.GOOGLE_SCRIPT_URL, leadPayload);
+        console.log("🚀 [LEAD SYNC] Core Database Update Response:", googleResponse.data);
+
+        // Optional: Reset session sequence steps so new messages don't loop old metrics
+        if (applicationState[to]) {
+          applicationState[to].stage = 0;
+        }
+
+      } catch (innerExtractionError) {
+        console.error("❌ [LEAD SENSOR ERROR] Automated parsing crashed:", innerExtractionError.message);
+      }
+    }
+
   } catch (err) {
     console.error("❌ WhatsApp dispatch failed:", err.response?.data || err.message);
   }
