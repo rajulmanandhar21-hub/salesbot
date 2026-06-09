@@ -13,14 +13,14 @@ const SYSTEM_PROMPT = process.env.SYSTEM_PROMPT;
 const applicationState = {};
 
 // Helper: Log every message exchange to Google Sheets monitoring tab
-async function logToMonitor(sessionId, sender, messageText, responseTimeMs = 0, status = "200 OK") {
+async function logToMonitor(sessionId, channel, sender, messageText, responseTimeMs = 0, status = "200 OK") {
   try {
     const url = process.env.GOOGLE_SHEET_URL;
     if (!url) return;
     await axios.post(url, {
       type: "log",
       timestamp: new Date().toISOString(),
-      channel: "WhatsApp",
+      channel: channel,
       session_id: sessionId,
       sender: sender,
       message_text: messageText,
@@ -120,7 +120,20 @@ async function sendWhatsApp(to, text) {
     console.error("❌ WhatsApp dispatch failed:", err.response?.data || err.message);
   }
 }
-
+// Helper: Send Messenger message
+async function sendMessenger(to, text) {
+  try {
+    await axios.post(
+      `https://graph.facebook.com/v19.0/me/messages?access_token=${process.env.MESSENGER_TOKEN}`,
+      {
+        recipient: { id: to },
+        message: { text: text }
+      }
+    );
+  } catch (err) {
+    console.error("❌ Messenger dispatch failed:", err.response?.data || err.message);
+  }
+}
 // Meta webhook verification
 app.get('/webhook', (req, res) => {
   const mode = req.query['hub.mode'];
@@ -134,21 +147,42 @@ app.get('/webhook', (req, res) => {
   }
 });
 
-// Handle incoming WhatsApp messages
+
 app.post('/webhook', async (req, res) => {
   try {
-    const entry = req.body.entry?.[0];
-    const change = entry?.changes?.[0];
-    const message = change?.value?.messages?.[0];
+   const entry = req.body.entry?.[0];
 
-    if (!message || message.type !== 'text') {
-      return res.sendStatus(200);
-    }
+// ==========================================
+// CHANNEL DETECTION — WhatsApp vs Messenger
+// ==========================================
+let userMessage, from, channel;
 
-    const userMessage = message.text.body.trim();
-    const lowerMessage = userMessage.toLowerCase();
-    const from = message.from;
-    const now = new Date();
+// WhatsApp payload structure
+const change = entry?.changes?.[0];
+const waMessage = change?.value?.messages?.[0];
+
+// Messenger payload structure
+const messaging = entry?.messaging?.[0];
+
+if (waMessage && waMessage.type === 'text') {
+  // WhatsApp message
+  userMessage = waMessage.text.body.trim();
+  from = waMessage.from;
+  channel = "WhatsApp";
+
+} else if (messaging && messaging.message && messaging.message.text) {
+  // Messenger message
+  userMessage = messaging.message.text.trim();
+  from = String(messaging.sender.id);
+  channel = "Messenger";
+
+} else {
+  // Not a text message we can handle
+  return res.sendStatus(200);
+}
+
+const lowerMessage = userMessage.toLowerCase();
+const now = new Date();
 
     // Initialize state
     if (!applicationState[from]) {
@@ -158,7 +192,7 @@ app.post('/webhook', async (req, res) => {
     if (!currentState.history) currentState.history = [];
 
     // Log incoming user message to monitor
-    await logToMonitor(from, "User", userMessage);
+    await logToMonitor(from, channel, "User", userMessage);
     currentState.history.push({ role: "user", text: userMessage });
 
     // 4-hour timeout reset
@@ -178,8 +212,8 @@ app.post('/webhook', async (req, res) => {
       currentState.stage = 0;
       currentState.status = "Closed";
       const exitMsg = "Understood. I have canceled your application setup. Let me know if you need anything else!";
-      await logToMonitor(from, "Bot", exitMsg);
-      await sendWhatsApp(from, exitMsg);
+      await logToMonitor(from, channel, "Bot", exitMsg);
+      channel === "Messenger" ? await sendMessenger(from, exitMsg) : await sendWhatsApp(from, exitMsg);
       return res.sendStatus(200);
     }
 
@@ -386,10 +420,10 @@ ${formattedTranscript}
     currentState.history.push({ role: "model", text: botResponseText });
 
     // Log complete response down to monitoring sheets tracking
-    await logToMonitor(from, "Bot", botResponseText, responseTimeMs, "200 OK");
+    await logToMonitor(from, channel, "Bot", botResponseText, responseTimeMs, "200 OK");
 
     // Dispatch clear message payload to user's device
-    await sendWhatsApp(from, botResponseText);
+    channel === "Messenger" ? await sendMessenger(from, botResponseText) : await sendWhatsApp(from, botResponseText);
     res.sendStatus(200);
 
   } catch (err) {
