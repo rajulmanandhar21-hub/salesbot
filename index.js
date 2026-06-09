@@ -75,36 +75,38 @@ async function askGroq(userMessage) {
   }
 }
 
-// Helper: Send data to Google Sheets (Formula-Safe Sanitized)
-async function sendToGoogleSheets(phone, name, education, chatSummary, priority) {
+// Helper: Send structured leads straight to your specific Apps Script routing channel
+async function sendToGoogleSheets(phone, name, education, chatSummary, priority, channel) {
   try {
-    const url = process.env.GOOGLE_SHEET_URL;
-    if (!url) return console.warn("⚠️ GOOGLE_SHEET_URL missing.");
+    const url = process.env.GOOGLE_SCRIPT_URL || process.env.GOOGLE_SHEET_URL;
+    if (!url) return console.warn("⚠️ Google Sheets routing URL environment variable missing.");
     
     // SAFEGUARD: Prevent Google Sheets from treating "+2" as a mathematical formula error
     let safeEducation = education ? education.trim() : "";
     if (safeEducation.startsWith('+') || safeEducation.startsWith('=')) {
-      safeEducation = `'${safeEducation}`; // Prepend single quote to force plain-text formatting
+      safeEducation = `'${safeEducation}`; 
     }
+    
+    const targetChannel = channel || "WhatsApp";
     
     await axios.post(url, {
       type: "lead",
+      channel: targetChannel, // Passes 'WhatsApp' or 'Messenger' cleanly to drive your Apps Script router
       phone: phone, 
-      name: name, 
-      education: safeEducation,
-      priority: priority, 
-      summary: chatSummary
+      name: name || "Unknown Candidate", 
+      education: safeEducation || "Not Provided",
+      priority: priority || "MEDIUM", 
+      summary: chatSummary || "No transcript brief generated."
     });
-    console.log(`📊 Lead successfully logged with priority [${priority}] for: ${phone}`);
+    console.log(`🚀 [LEAD DEPLOY] ${targetChannel} lead logged to sheet for: ${phone}`);
   } catch (error) {
     console.error("❌ Failed to push lead to Google Sheets:", error.message);
   }
 }
 
-// Helper: Send WhatsApp message and auto-extract qualification data
+// Helper: Send WhatsApp message (Cleaned up from old duplication dependencies)
 async function sendWhatsApp(to, text) {
   try {
-    // 1. Fire the actual text message to the user's phone via Meta Graph API
     await axios.post(
       `https://graph.facebook.com/v19.0/${PHONE_NUMBER_ID}/messages`,
       {
@@ -117,48 +119,12 @@ async function sendWhatsApp(to, text) {
         headers: { Authorization: `Bearer ${WHATSAPP_TOKEN}` }
       }
     );
-
-    // 2. 🎯 AUTOMATED LEAD TRIGGER SENSOR
-    // Intercepts the bot's closing confirmation message to run extraction background tasks
-    if (text.includes("securely logged") || text.includes("application profile")) {
-      try {
-        console.log(`📋 [LEAD DETECTION] Final text matched! Initializing Groq data harvest for: ${to}`);
-        
-        // Safely fetch your session cache history
-        const sessionState = applicationState[to];
-        const historyArray = sessionState ? sessionState.history : [];
-
-        // Invoke your background Groq structure analyzer model function
-        const structuredLeadData = await extractDataWithGroqJSON(historyArray);
-
-        const leadPayload = {
-          type: "lead", // Flags Apps Script parser router logic
-          channel: "whatsapp",
-          phone: to,
-          name: structuredLeadData.name || (sessionState ? sessionState.name : "Unknown"),
-          education: structuredLeadData.education || (sessionState ? sessionState.education : "Not Given"),
-          priority: structuredLeadData.priority || "HIGH",
-          summary: structuredLeadData.summary || "No automated data brief available."
-        };
-
-        // Post structured array straight to your spreadsheet deployment URL
-        const googleResponse = await axios.post(process.env.GOOGLE_SCRIPT_URL, leadPayload);
-        console.log("🚀 [LEAD SYNC] Core Database Update Response:", googleResponse.data);
-
-        // Optional: Reset session sequence steps so new messages don't loop old metrics
-        if (applicationState[to]) {
-          applicationState[to].stage = 0;
-        }
-
-      } catch (innerExtractionError) {
-        console.error("❌ [LEAD SENSOR ERROR] Automated parsing crashed:", innerExtractionError.message);
-      }
-    }
-
+    console.log(`📲 Outbound WhatsApp ping delivered to ${to}`);
   } catch (err) {
     console.error("❌ WhatsApp dispatch failed:", err.response?.data || err.message);
   }
 }
+
 // Helper: Send Messenger message
 async function sendMessenger(to, text) {
   try {
@@ -169,10 +135,12 @@ async function sendMessenger(to, text) {
         message: { text: text }
       }
     );
+    console.log(`💬 Outbound Messenger ping delivered to ${to}`);
   } catch (err) {
     console.error("❌ Messenger dispatch failed:", err.response?.data || err.message);
   }
 }
+
 // Meta webhook verification
 app.get('/webhook', (req, res) => {
   const mode = req.query['hub.mode'];
@@ -186,46 +154,39 @@ app.get('/webhook', (req, res) => {
   }
 });
 
-
+// Centralized Inbound Processing Engine
 app.post('/webhook', async (req, res) => {
   try {
-   const entry = req.body.entry?.[0];
+    const entry = req.body.entry?.[0];
+    if (!entry) return res.sendStatus(200);
 
-// ==========================================
-// CHANNEL DETECTION — WhatsApp vs Messenger
-// ==========================================
-let userMessage, from, channel;
+    // ==========================================
+    // CHANNEL DETECTION — WhatsApp vs Messenger
+    // ==========================================
+    let userMessage, from, channel;
 
-// WhatsApp payload structure
-const change = entry?.changes?.[0];
-const waMessage = change?.value?.messages?.[0];
+    const change = entry?.changes?.[0];
+    const waMessage = change?.value?.messages?.[0];
+    const messaging = entry?.messaging?.[0];
 
-// Messenger payload structure
-const messaging = entry?.messaging?.[0];
+    if (waMessage && waMessage.type === 'text') {
+      userMessage = waMessage.text.body.trim();
+      from = waMessage.from;
+      channel = "WhatsApp";
+    } else if (messaging && messaging.message && messaging.message.text) {
+      userMessage = messaging.message.text.trim();
+      from = String(messaging.sender.id);
+      channel = "Messenger";
+    } else {
+      return res.sendStatus(200);
+    }
 
-if (waMessage && waMessage.type === 'text') {
-  // WhatsApp message
-  userMessage = waMessage.text.body.trim();
-  from = waMessage.from;
-  channel = "WhatsApp";
-
-} else if (messaging && messaging.message && messaging.message.text) {
-  // Messenger message
-  userMessage = messaging.message.text.trim();
-  from = String(messaging.sender.id);
-  channel = "Messenger";
-
-} else {
-  // Not a text message we can handle
-  return res.sendStatus(200);
-}
-
-const lowerMessage = userMessage.toLowerCase();
-const now = new Date();
+    const lowerMessage = userMessage.toLowerCase();
+    const now = new Date();
 
     // Initialize state
     if (!applicationState[from]) {
-      applicationState[from] = { stage: 0, name: "", education: "", history: [] };
+      applicationState[from] = { stage: 0, name: "", education: "", history: [], status: "Active", lastInteraction: now };
     }
     const currentState = applicationState[from];
     if (!currentState.history) currentState.history = [];
@@ -326,145 +287,4 @@ const now = new Date();
         botResponseText = "No problem at all! I have stopped the application process. Feel free to reach out whenever you're ready.";
       } else if (classification === "QUESTION") {
         try {
-          const answerPrompt = `You are an HR assistant. A job applicant asked this question about their qualification during an application: "${userMessage}". Answer their concern helpfully and honestly based on the job details you know. At the end of your answer, remind them to please provide their highest educational qualification to continue their application.`;
-          const answerResult = await askGroq(answerPrompt);
-          botResponseText = answerResult.replyText;
-        } catch (error) {
-          botResponseText = "I received your question. Could you please state your highest qualification directly so we can finish logging your profile details?";
-        }
-      } else {
-        console.log(`🎯 Funnel complete for: ${from}. Running optimized Groq evaluation pipeline...`);
-
-        try {
-          const formattedTranscript = currentState.history
-            .map(msg => `${msg.role === "user" ? "Candidate" : "Bot"}: ${msg.text}`)
-            .join("\n");
-
-          // SYSTEM_PROMPT is omitted here because askGroq already loads it automatically inside the API structure!
-          const combinedEvaluationPrompt = `
-=========================================
-EVALUATION TASK INSTRUCTIONS:
-You are an internal HR data assistant. Analyze the conversation transcript below and output exactly three values formatted strictly as a single JSON object.
-
-Expected JSON format output:
-{
-  "education": "1-3 words extraction of highest degree (e.g. BBA Finance, +2 Pass)",
-  "priority": "HIGH, MEDIUM, or LOW based on your system scoring parameters",
-  "summary": "Your concise 2-sentence professional applicant summary."
-}
-
-TRANSCRIPT TO EVALUATE:
-${formattedTranscript}
-`;
-
-          const evaluationResult = await askGroq(combinedEvaluationPrompt);
-          responseTimeMs += evaluationResult.responseTimeMs;
-          
-          let parsedData;
-          try {
-            let cleanJsonText = evaluationResult.replyText.replace(/```json|```/g, "").trim();
-            
-            // Isolate literal bracket bounds in case of conversational padding
-            const jsonMatch = cleanJsonText.match(/\{[\s\S]*\}/);
-            if (jsonMatch) {
-              cleanJsonText = jsonMatch[0];
-            }
-            
-            parsedData = JSON.parse(cleanJsonText);
-          } catch (jsonErr) {
-            console.warn("⚠️ JSON fallback running case-matching...");
-            const upperReply = evaluationResult.replyText.toUpperCase();
-            parsedData = {
-              education: userMessage.trim().substring(0, 30),
-              priority: upperReply.includes("LOW") ? "LOW" : upperReply.includes("HIGH") ? "HIGH" : "MEDIUM",
-              summary: evaluationResult.replyText.substring(0, 150)
-            };
-          }
-
-          currentState.education = parsedData.education || userMessage.trim();
-          let detectedPriority = parsedData.priority ? parsedData.priority.toUpperCase() : "MEDIUM";
-          let finalSummary = parsedData.summary || "Profile evaluation logging complete.";
-
-          console.log(`✨ Groq Priority Calculated: [${detectedPriority}] | Degree: [${currentState.education}]`);
-
-          // Deliver clean mapped entries straight down the pipeline to Google Sheets
-          await sendToGoogleSheets(from, currentState.name, currentState.education, finalSummary, detectedPriority);
-          
-          botResponseText = "Thank you so much! Your application profile details have been securely logged into our system. Our HR team will reach out within 24 hours. Have a wonderful day!";
-          currentState.stage = "Closed";
-
-        } catch (error) {
-          console.error("🚨 Processing crash fallback activated:", error.message);
-          
-          let fallbackEducation = userMessage.length > 25 ? "Profile Registered" : userMessage.trim();
-          await sendToGoogleSheets(from, currentState.name, fallbackEducation, "Logged via system backup safety protocol.", "MEDIUM");
-
-          botResponseText = "Thank you! Your details have been successfully received and submitted to our hiring pipeline. Our HR team will get in touch with you shortly.";
-          currentState.stage = "Closed";
-        }
-      }
-
-    // ==========================================
-    // STAGE 0: Normal Chat & Intercept Trigger
-    // ==========================================
-    } else {
-      const result = await askGroq(userMessage);
-      botResponseText = result.replyText;
-      responseTimeMs = result.responseTimeMs;
-
-      // Smart Application Funnel Intercept
-      if (botResponseText.includes("[START_APPLICATION]")) {
-  console.log(`Smart intercept: application funnel triggered for ${from}`);
-  currentState.stage = 1;
-  botResponseText = "Great! Let's get your application registered. To start, what is your full name?";
-}
-
-    // ✅ PASTE THIS NEW SECTION HERE:
-    // ==========================================
-    // CENTRALIZED OUTPUT CLEANER & INTERCEPTOR
-    // ==========================================
-    
-    // 1. Check for application triggers anywhere in the pipeline response
-    if (botResponseText.includes("[START_APPLICATION]")) {
-      botResponseText = botResponseText.replace("[START_APPLICATION]", "").trim();
-      
-      // Only append name prompt if we aren't already collecting info
-      if (currentState.stage === 0) {
-        console.log(`Smart intercept: Shifting ${from} to Stage 1 (Name Collection)`);
-        currentState.stage = 1;
-        
-        // Check if Llama already said something similar to avoid double greetings
-       botResponseText = "Great! Let's get your application registered. To start, what is your full name?";
-        }
-      }
-    }
-
-    // 2. Clear out closing flags cleanly
-    if (botResponseText.includes("[CLOSE_CONVERSATION]")) {
-      console.log(`Close intercept triggered for ${from}`);
-      botResponseText = botResponseText.replace("[CLOSE_CONVERSATION]", "").trim();
-      currentState.stage = 0;
-      currentState.status = "Closed";
-    }
-
-    // 3. Clean up generic markdown artifacts or awkward double spacing
-    botResponseText = botResponseText.replace(/\n{3,}/g, "\n\n").trim();
-
-    // Commit to conversation history logs
-    currentState.history.push({ role: "model", text: botResponseText });
-
-    // Log complete response down to monitoring sheets tracking
-    await logToMonitor(from, channel, "Bot", botResponseText, responseTimeMs, "200 OK");
-
-    // Dispatch clear message payload to user's device
-    channel === "Messenger" ? await sendMessenger(from, botResponseText) : await sendWhatsApp(from, botResponseText);
-    res.sendStatus(200);
-
-  } catch (err) {
-    console.error("💥 General Route Crash Error:", err?.response?.data || err.message);
-    res.sendStatus(500);
-  }
-});
-
-const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => console.log(`Groq-powered Application Engine active on port ${PORT}`));
+          const answerPrompt = `You are an HR assistant. A job applicant asked this question about their qualification during an application: "${userMessage}". Answer their concern help
