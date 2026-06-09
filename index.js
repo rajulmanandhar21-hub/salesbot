@@ -375,12 +375,10 @@ ${formattedTranscript}
 
       // Smart Application Funnel Intercept
       if (botResponseText.includes("[START_APPLICATION]")) {
-        console.log(`Smart intercept: application funnel triggered for ${from}`);
-        let transitionMessage = botResponseText.replace("[START_APPLICATION]", "").trim();
-        currentState.stage = 1;
-        botResponseText = transitionMessage + "\n\nGreat! Let's get your application registered. To start, what is your full name?";
-      }
-    }
+  console.log(`Smart intercept: application funnel triggered for ${from}`);
+  currentState.stage = 1;
+  botResponseText = "Great! Let's get your application registered. To start, what is your full name?";
+}
 
     // ✅ PASTE THIS NEW SECTION HERE:
     // ==========================================
@@ -397,10 +395,7 @@ ${formattedTranscript}
         currentState.stage = 1;
         
         // Check if Llama already said something similar to avoid double greetings
-        if (!botResponseText.toLowerCase().includes("name") && !botResponseText.toLowerCase().includes("start")) {
-          botResponseText += "\n\nGreat! Let's get your application registered. To start, what is your full name?";
-        } else if (!botResponseText.toLowerCase().includes("full name")) {
-          botResponseText += "\n\nCould you please provide your full name?";
+       botResponseText = "Great! Let's get your application registered. To start, what is your full name?";
         }
       }
     }
