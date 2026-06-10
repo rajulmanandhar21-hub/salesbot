@@ -32,6 +32,7 @@ async function logToMonitor(sessionId, channel, sender, messageText, responseTim
   } catch (err) {
     console.warn("⚠️ Monitor log failed:", err.message);
   }
+} // 🟢 FIX 1: Restored missing closing brace for logToMonitor function
 
 // Helper: Ask Groq Cloud (Llama 3.3 70B) with Balanced Gemini Failover
 async function askGroq(promptText) {
@@ -88,6 +89,7 @@ async function askGroq(promptText) {
     }
   }
 }
+
 // Helper: Send structured leads straight to your specific Apps Script routing channel
 async function sendToGoogleSheets(phone, name, education, chatSummary, priority, channel) {
   try {
@@ -333,19 +335,16 @@ app.post('/webhook', async (req, res) => {
             .map(msg => `${msg.role === "user" ? "Candidate" : "Bot"}: ${msg.text}`)
             .join("\n");
 
-         // Ensure your RAG engine has fetched the vacancy details from your Google Doc knowledge base first
-// (e.g., const retrievedJobCriteria = await fetchDocContext(jobId);)
-
-const combinedEvaluationPrompt = "EVALUATION TASK INSTRUCTIONS:\n" +
-"You are an internal HR data assistant. Analyze the conversation transcript below against the specific job qualification rules provided.\n\n" +
-"CRITICAL PRIORITY SCORING PARAMETERS (RETRIEVED FROM KNOWLEDGE BASE):\n" + retrievedJobCriteria + "\n\n" +
-"Expected JSON format output:\n" +
-"{\n" +
-"  \"education\": \"1-3 words extraction of highest degree (e.g. BBA Finance, +2 Pass)\",\n" +
-"  \"priority\": \"HIGH, MEDIUM, or LOW based on the retrieved scoring parameters above\",\n" +
-"  \"summary\": \"Your concise 2-sentence professional applicant summary.\"\n" +
-"}\n\n" +
-"TRANSCRIPT TO EVALUATE:\n" + formattedTranscript;
+          const combinedEvaluationPrompt = "EVALUATION TASK INSTRUCTIONS:\n" +
+          "You are an internal HR data assistant. Analyze the conversation transcript below against the specific job qualification rules provided.\n\n" +
+          "CRITICAL PRIORITY SCORING PARAMETERS (RETRIEVED FROM KNOWLEDGE BASE):\n" + retrievedJobCriteria + "\n\n" +
+          "Expected JSON format output:\n" +
+          "{\n" +
+          "  \"education\": \"1-3 words extraction of highest degree (e.g. BBA Finance, +2 Pass)\",\n" +
+          "  \"priority\": \"HIGH, MEDIUM, or LOW based on the retrieved scoring parameters above\",\n" +
+          "  \"summary\": \"Your concise 2-sentence professional applicant summary.\"\n" +
+          "}\n\n" +
+          "TRANSCRIPT TO EVALUATE:\n" + formattedTranscript;
 
           const evaluationResult = await askGroq(combinedEvaluationPrompt);
           responseTimeMs += evaluationResult.responseTimeMs;
@@ -394,11 +393,11 @@ const combinedEvaluationPrompt = "EVALUATION TASK INSTRUCTIONS:\n" +
     // STAGE 0: Normal Chat & Intercept Trigger
     // ==========================================
     } else {
-  // Fetch live vacancies if not already cached for this session
-  if (!currentState.vacancyCache) {
-    currentState.vacancyCache = await fetchJobVacancies();
-  }
-  const result = await askGroq(userMessage, currentState.vacancyCache);
+      // Fetch live vacancies if not already cached for this session
+      if (!currentState.vacancyCache) {
+        currentState.vacancyCache = await fetchJobVacancies();
+      }
+      const result = await askGroq(userMessage, currentState.vacancyCache);
       botResponseText = result.replyText;
       responseTimeMs = result.responseTimeMs;
     }
@@ -450,8 +449,7 @@ const combinedEvaluationPrompt = "EVALUATION TASK INSTRUCTIONS:\n" +
       res.sendStatus(500);
     }
   }
-});
+}); // 🟢 FIX 2: Correctly matches the open of app.post('/webhook'...)
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => console.log(`Groq-powered Application Engine active on port ${PORT}`));
-}
