@@ -19,7 +19,7 @@ async function logToMonitor(sessionId, channel, sender, messageText, responseTim
     if (!url) return;
     await axios.post(url, {
       type: "log",
-      timestamp: new Date().toISOString(),
+      timestamp: new Date().toLocaleString("en-US", { timeZone: "Asia/Kathmandu" }),
       channel: channel,
       session_id: sessionId,
       sender: sender,
