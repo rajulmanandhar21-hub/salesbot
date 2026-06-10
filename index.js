@@ -323,26 +323,19 @@ app.post('/webhook', async (req, res) => {
             .map(msg => `${msg.role === "user" ? "Candidate" : "Bot"}: ${msg.text}`)
             .join("\n");
 
-          const combinedEvaluationPrompt = `
-=========================================
-const combinedEvaluationPrompt = `
-=========================================
-EVALUATION TASK INSTRUCTIONS:
-You are an internal HR data assistant. Analyze the conversation transcript below against the specific job qualification rules provided.
+         // Ensure your RAG engine has fetched the vacancy details from your Google Doc knowledge base first
+// (e.g., const retrievedJobCriteria = await fetchDocContext(jobId);)
 
-CRITICAL PRIORITY SCORING PARAMETERS (RETRIEVED FROM KNOWLEDGE BASE):
-${retrievedJobCriteria}
-
-Expected JSON format output:
-{
-  "education": "1-3 words extraction of highest degree (e.g. BBA Finance, +2 Pass)",
-  "priority": "HIGH, MEDIUM, or LOW based on the retrieved scoring parameters above",
-  "summary": "Your concise 2-sentence professional applicant summary."
-}
-
-TRANSCRIPT TO EVALUATE:
-${formattedTranscript}
-`;
+const combinedEvaluationPrompt = "EVALUATION TASK INSTRUCTIONS:\n" +
+"You are an internal HR data assistant. Analyze the conversation transcript below against the specific job qualification rules provided.\n\n" +
+"CRITICAL PRIORITY SCORING PARAMETERS (RETRIEVED FROM KNOWLEDGE BASE):\n" + retrievedJobCriteria + "\n\n" +
+"Expected JSON format output:\n" +
+"{\n" +
+"  \"education\": \"1-3 words extraction of highest degree (e.g. BBA Finance, +2 Pass)\",\n" +
+"  \"priority\": \"HIGH, MEDIUM, or LOW based on the retrieved scoring parameters above\",\n" +
+"  \"summary\": \"Your concise 2-sentence professional applicant summary.\"\n" +
+"}\n\n" +
+"TRANSCRIPT TO EVALUATE:\n" + formattedTranscript;
 
           const evaluationResult = await askGroq(combinedEvaluationPrompt);
           responseTimeMs += evaluationResult.responseTimeMs;
