@@ -35,7 +35,7 @@ async function logToMonitor(sessionId, channel, sender, messageText, responseTim
 }
 
 // Helper: Ask Groq Cloud (Llama 3.3 70B)
-async function askGroq(userMessage) {
+async function askGroq(userMessage, vacancyData = null) {
   if (!GROQ_API_KEY) {
     console.error("🚨 CRITICAL: GROQ_API_KEY environment variable is missing!");
     throw new Error("Groq API key not configured");
@@ -50,9 +50,12 @@ async function askGroq(userMessage) {
       {
         model: "llama-3.3-70b-versatile",
         messages: [
-          { role: "system", content: SYSTEM_PROMPT },
-          { role: "user", content: userMessage }
-        ],
+  { 
+    role: "system", 
+    content: SYSTEM_PROMPT + (vacancyData ? `\n\n=========================================\nLIVE VACANCY DATABASE (Always use this as your primary reference for job details. This overrides any vacancy info in the system prompt):\n=========================================\n${vacancyData}` : "")
+  },
+  { role: "user", content: userMessage }
+],
         temperature: 0.2 
       },
       {
@@ -140,6 +143,28 @@ async function sendMessenger(to, text) {
   }
 }
 
+// Helper: Fetch live job vacancy data from Google Doc
+async function fetchJobVacancies() {
+  try {
+    const docId = process.env.VACANCY_DOC_ID;
+    if (!docId) {
+      console.warn("⚠️ VACANCY_DOC_ID not set. Using system prompt only.");
+      return null;
+    }
+
+    const response = await axios.get(
+      `https://docs.google.com/document/d/${docId}/export?format=txt`
+    );
+
+    console.log("📄 Vacancy doc fetched successfully.");
+    return response.data;
+
+  } catch (err) {
+    console.warn("⚠️ Failed to fetch vacancy doc:", err.message);
+    return null;
+  }
+}
+
 // Meta webhook verification
 app.get('/webhook', (req, res) => {
   const mode = req.query['hub.mode'];
@@ -199,6 +224,7 @@ app.post('/webhook', async (req, res) => {
       currentState.name = "";
       currentState.education = "";
       currentState.status = "Active";
+      currentState.vacancyCache = null; // Force vacancy refresh on next message
     }
     currentState.lastInteraction = now;
 
@@ -360,7 +386,11 @@ ${formattedTranscript}
     // STAGE 0: Normal Chat & Intercept Trigger
     // ==========================================
     } else {
-      const result = await askGroq(userMessage);
+  // Fetch live vacancies if not already cached for this session
+  if (!currentState.vacancyCache) {
+    currentState.vacancyCache = await fetchJobVacancies();
+  }
+  const result = await askGroq(userMessage, currentState.vacancyCache);
       botResponseText = result.replyText;
       responseTimeMs = result.responseTimeMs;
     }
