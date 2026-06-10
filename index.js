@@ -54,15 +54,14 @@ async function askGroq(promptText) {
     };
 
   } catch (error) {
-    // Check if the error is a rate limit before falling through
     isRateLimit = error.status === 429 || (error.message && error.message.includes("rate_limit"));
     if (!isRateLimit) {
-      throw error; // If it's a code or network bug, crash normally
+      throw error;
     }
     console.warn("⚠️ Groq Rate Limit Exceeded! Dropping out of primary block to execute backup...");
   }
 
-  // 2. Fallover Execution via Gemini (Kept outside to avoid nested brace errors)
+  // 2. Fallover Execution via Gemini
   if (isRateLimit) {
     try {
       const backupStartTime = Date.now();
@@ -85,7 +84,6 @@ async function askGroq(promptText) {
     }
   }
 }
-
 // Helper: Send structured leads straight to your specific Apps Script routing channel
 async function sendToGoogleSheets(phone, name, education, chatSummary, priority, channel) {
   try {
