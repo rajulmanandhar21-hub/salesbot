@@ -33,12 +33,12 @@ async function logToMonitor(sessionId, channel, sender, messageText, responseTim
     console.warn("⚠️ Monitor log failed:", err.message);
   }
 
-
-// Helper: Ask Groq Cloud (Llama 3.3 70B) with Flat Gemini Failover
+// Helper: Ask Groq Cloud (Llama 3.3 70B) with Balanced Gemini Failover
 async function askGroq(promptText) {
   let isRateLimit = false;
+  let groqResult = null;
 
-  // 1. Try Primary Execution via Groq
+  // 1. Primary Execution via Groq
   try {
     console.log("🚀 Attempting primary processing via Groq Cloud...");
     
@@ -48,17 +48,21 @@ async function askGroq(promptText) {
       temperature: 0.1,
     });
     
-    return {
+    groqResult = {
       replyText: groqResponse.choices[0].message.content,
       responseTimeMs: 0
     };
-
   } catch (error) {
     isRateLimit = error.status === 429 || (error.message && error.message.includes("rate_limit"));
     if (!isRateLimit) {
       throw error;
     }
-    console.warn("⚠️ Groq Rate Limit Exceeded! Dropping out of primary block to execute backup...");
+    console.warn("⚠️ Groq Rate Limit Exceeded! Shifting over to execute backup track...");
+  }
+
+  // Return the groq result early if it succeeded
+  if (groqResult) {
+    return groqResult;
   }
 
   // 2. Fallover Execution via Gemini
