@@ -325,13 +325,18 @@ app.post('/webhook', async (req, res) => {
 
           const combinedEvaluationPrompt = `
 =========================================
+const combinedEvaluationPrompt = `
+=========================================
 EVALUATION TASK INSTRUCTIONS:
-You are an internal HR data assistant. Analyze the conversation transcript below and output exactly three values formatted strictly as a single JSON object.
+You are an internal HR data assistant. Analyze the conversation transcript below against the specific job qualification rules provided.
+
+CRITICAL PRIORITY SCORING PARAMETERS (RETRIEVED FROM KNOWLEDGE BASE):
+${retrievedJobCriteria}
 
 Expected JSON format output:
 {
   "education": "1-3 words extraction of highest degree (e.g. BBA Finance, +2 Pass)",
-  "priority": "HIGH, MEDIUM, or LOW based on your system scoring parameters",
+  "priority": "HIGH, MEDIUM, or LOW based on the retrieved scoring parameters above",
   "summary": "Your concise 2-sentence professional applicant summary."
 }
 
