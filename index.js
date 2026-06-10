@@ -34,8 +34,11 @@ async function logToMonitor(sessionId, channel, sender, messageText, responseTim
   }
 
 
-// Helper: Ask Groq Cloud (Llama 3.3 70B) with Gemini Failover
+// Helper: Ask Groq Cloud (Llama 3.3 70B) with Flat Gemini Failover
 async function askGroq(promptText) {
+  let isRateLimit = false;
+
+  // 1. Try Primary Execution via Groq
   try {
     console.log("🚀 Attempting primary processing via Groq Cloud...");
     
@@ -51,56 +54,35 @@ async function askGroq(promptText) {
     };
 
   } catch (error) {
-    // Check if the failure is a Rate Limit or Provider Outage
-    const isRateLimit = error.status === 429 || (error.message && error.message.includes("rate_limit"));
-    
-    if (isRateLimit) {
-      console.warn("⚠️ Groq Rate Limit Exceeded! Activating automatic failover to Gemini Backup...");
+    // Check if the error is a rate limit before falling through
+    isRateLimit = error.status === 429 || (error.message && error.message.includes("rate_limit"));
+    if (!isRateLimit) {
+      throw error; // If it's a code or network bug, crash normally
+    }
+    console.warn("⚠️ Groq Rate Limit Exceeded! Dropping out of primary block to execute backup...");
+  }
+
+  // 2. Fallover Execution via Gemini (Kept outside to avoid nested brace errors)
+  if (isRateLimit) {
+    try {
+      const backupStartTime = Date.now();
       
-      try {
-        const backupStartTime = Date.now();
-        
-        const geminiResponse = await ai.models.generateContent({
-          model: "gemini-1.5-flash",
-          contents: promptText,
-        });
-        
-        const backupResponseTimeMs = Date.now() - backupStartTime;
-        
-        console.log("✅ Backup evaluation completed successfully via Gemini!");
-        return {
-          replyText: geminiResponse.text,
-          responseTimeMs: backupResponseTimeMs
-        };
-        
-      } catch (geminiError) {
-        console.error("🚨 Critical Error: Both Groq and Gemini providers failed entirely.", geminiError);
-        throw geminiError;
-      }
+      const geminiResponse = await ai.models.generateContent({
+        model: "gemini-1.5-flash",
+        contents: promptText,
+      });
+      
+      const backupResponseTimeMs = Date.now() - backupStartTime;
+      console.log("✅ Backup evaluation completed successfully via Gemini!");
+      
+      return {
+        replyText: geminiResponse.text,
+        responseTimeMs: backupResponseTimeMs
+      };
+    } catch (geminiError) {
+      console.error("🚨 Critical Error: Both Groq and Gemini providers failed entirely.", geminiError);
+      throw geminiError;
     }
-    
-    throw error;
-  }
-        
-      } catch (geminiError) {
-        console.error("🚨 Critical Error: Both Groq and Gemini providers failed entirely.", geminiError);
-        throw geminiError;
-      }
-    }
-    
-    throw error;
-  }
-}
-
-    const responseTimeMs = Date.now() - startTime;
-    const replyText = response.data.choices[0].message.content;
-    
-    console.log(`✅ Groq Response Received successfully in ${responseTimeMs}ms!`);
-    return { replyText, responseTimeMs };
-
-  } catch (error) {
-    console.error(`❌ Groq API Call Failed: ${error.response?.data?.error?.message || error.message}`);
-    throw error;
   }
 }
 
