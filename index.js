@@ -58,18 +58,29 @@ async function askGroq(promptText) {
       console.warn("⚠️ Groq Rate Limit Exceeded! Activating automatic failover to Gemini Backup...");
       
       try {
-        const startTime = Date.now();
+        const backupStartTime = Date.now();
         
         const geminiResponse = await ai.models.generateContent({
           model: "gemini-1.5-flash",
           contents: promptText,
         });
         
+        const backupResponseTimeMs = Date.now() - backupStartTime;
+        
         console.log("✅ Backup evaluation completed successfully via Gemini!");
         return {
           replyText: geminiResponse.text,
-          responseTimeMs: Date.now() - startTime
+          responseTimeMs: backupResponseTimeMs
         };
+        
+      } catch (geminiError) {
+        console.error("🚨 Critical Error: Both Groq and Gemini providers failed entirely.", geminiError);
+        throw geminiError;
+      }
+    }
+    
+    throw error;
+  }
         
       } catch (geminiError) {
         console.error("🚨 Critical Error: Both Groq and Gemini providers failed entirely.", geminiError);
