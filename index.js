@@ -35,36 +35,55 @@ async function logToMonitor(sessionId, channel, sender, messageText, responseTim
 }
 
 // Helper: Ask Groq Cloud (Llama 3.3 70B)
-async function askGroq(userMessage, vacancyData = null) {
-  if (!GROQ_API_KEY) {
-    console.error("🚨 CRITICAL: GROQ_API_KEY environment variable is missing!");
-    throw new Error("Groq API key not configured");
-  }
 
+async function askGroq(promptText) {
   try {
-    console.log(`🚀 Sending request to Groq Cloud (Llama 3.3 70B)...`);
-    const startTime = Date.now();
+    console.log("🚀 Attempting primary processing via Groq Cloud...");
+    
+    // Your existing core Groq API execution goes here
+    const groqResponse = await groq.chat.completions.create({
+      messages: [{ role: "user", content: promptText }],
+      model: "llama-3.3-70b-versatile",
+      temperature: 0.1, // Low temperature for consistent structural parsing
+    });
+    
+    return {
+      replyText: groqResponse.choices[0].message.content,
+      responseTimeMs: 0 // If you calculate response timings, map it here
+    };
 
-    const response = await axios.post(
-      "https://api.groq.com/openai/v1/chat/completions",
-      {
-        model: "llama-3.3-70b-versatile",
-        messages: [
-  { 
-    role: "system", 
-    content: SYSTEM_PROMPT + (vacancyData ? `\n\n=========================================\nLIVE VACANCY DATABASE (Always use this as your primary reference for job details. This overrides any vacancy info in the system prompt):\n=========================================\n${vacancyData}` : "")
-  },
-  { role: "user", content: userMessage }
-],
-        temperature: 0.2 
-      },
-      {
-        headers: {
-          "Authorization": `Bearer ${GROQ_API_KEY}`,
-          "Content-Type": "application/json"
-        }
+  } catch (error) {
+    // Check if the failure is specifically a Rate Limit or Provider Outage
+    const isRateLimit = error.status === 429 || (error.message && error.message.includes("rate_limit"));
+    
+    if (isRateLimit) {
+      console.warn("⚠️ Groq Rate Limit Exceeded! Activating automatic failover to Gemini Backup...");
+      
+      try {
+        const startTime = Date.now();
+        
+        // Execute backup request via your saved Gemini Environment Credentials
+        const geminiResponse = await ai.models.generateContent({
+          model: "gemini-1.5-flash", // Fast, highly accurate for text extraction
+          contents: promptText,
+        });
+        
+        console.log("✅ Backup evaluation completed successfully via Gemini!");
+        return {
+          replyText: geminiResponse.text,
+          responseTimeMs: Date.now() - startTime
+        };
+        
+      } catch (geminiError) {
+        console.error("🚨 Critical Error: Both Groq and Gemini providers failed entirely.", geminiError);
+        throw geminiError; // Hard crash if both engines are completely depleted
       }
-    );
+    }
+    
+    // If it's a completely different programmatic code error, throw it standard
+    throw error;
+  }
+}
 
     const responseTimeMs = Date.now() - startTime;
     const replyText = response.data.choices[0].message.content;
