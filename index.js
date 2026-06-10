@@ -32,28 +32,26 @@ async function logToMonitor(sessionId, channel, sender, messageText, responseTim
   } catch (err) {
     console.warn("⚠️ Monitor log failed:", err.message);
   }
-}
 
-// Helper: Ask Groq Cloud (Llama 3.3 70B)
 
+// Helper: Ask Groq Cloud (Llama 3.3 70B) with Gemini Failover
 async function askGroq(promptText) {
   try {
     console.log("🚀 Attempting primary processing via Groq Cloud...");
     
-    // Your existing core Groq API execution goes here
     const groqResponse = await groq.chat.completions.create({
       messages: [{ role: "user", content: promptText }],
       model: "llama-3.3-70b-versatile",
-      temperature: 0.1, // Low temperature for consistent structural parsing
+      temperature: 0.1,
     });
     
     return {
       replyText: groqResponse.choices[0].message.content,
-      responseTimeMs: 0 // If you calculate response timings, map it here
+      responseTimeMs: 0
     };
 
   } catch (error) {
-    // Check if the failure is specifically a Rate Limit or Provider Outage
+    // Check if the failure is a Rate Limit or Provider Outage
     const isRateLimit = error.status === 429 || (error.message && error.message.includes("rate_limit"));
     
     if (isRateLimit) {
@@ -62,9 +60,8 @@ async function askGroq(promptText) {
       try {
         const startTime = Date.now();
         
-        // Execute backup request via your saved Gemini Environment Credentials
         const geminiResponse = await ai.models.generateContent({
-          model: "gemini-1.5-flash", // Fast, highly accurate for text extraction
+          model: "gemini-1.5-flash",
           contents: promptText,
         });
         
@@ -76,11 +73,10 @@ async function askGroq(promptText) {
         
       } catch (geminiError) {
         console.error("🚨 Critical Error: Both Groq and Gemini providers failed entirely.", geminiError);
-        throw geminiError; // Hard crash if both engines are completely depleted
+        throw geminiError;
       }
     }
     
-    // If it's a completely different programmatic code error, throw it standard
     throw error;
   }
 }
