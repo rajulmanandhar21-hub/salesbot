@@ -32,7 +32,7 @@ async function logToMonitor(sessionId, channel, sender, messageText, responseTim
   } catch (err) {
     console.warn("⚠️ Monitor log failed:", err.message);
   }
-} // 🟢 FIX 1: Restored missing closing brace for logToMonitor function
+}
 
 // Helper: Ask Groq Cloud (Llama 3.3 70B) with Balanced Gemini Failover
 async function askGroq(promptText) {
@@ -155,6 +155,22 @@ async function sendMessenger(to, text) {
   }
 }
 
+// Helper: Send Instagram Message
+async function sendInstagram(to, text) {
+  try {
+    await axios.post(
+      `https://graph.facebook.com/v21.0/me/messages?access_token=${process.env.MESSENGER_TOKEN}`, 
+      {
+        recipient: { id: to },
+        message: { text: text }
+      }
+    );
+    console.log(`📸 Outbound Instagram ping delivered to ${to}`);
+  } catch (err) {
+    console.error("❌ Instagram dispatch failed:", err.response?.data || err.message);
+  }
+}
+
 // Helper: Fetch live job vacancy data from Google Doc
 async function fetchJobVacancies() {
   try {
@@ -179,52 +195,80 @@ async function fetchJobVacancies() {
 
 // Meta webhook verification
 app.get('/webhook', (req, res) => {
-  // Extract query parameters from Meta's verification request
   const mode = req.query['hub.mode'];
   const token = req.query['hub.verify_token'];
   const challenge = req.query['hub.challenge'];
 
-  // Check if the mode and token match your custom verify token ("jabbot123")
   if (mode && token) {
     if (mode === 'subscribe' && token === 'jabbot123') {
       console.log('WEBHOOK_VERIFIED');
-      // You MUST send back the challenge as a raw string with a 200 OK status
       return res.status(200).send(challenge);
     } else {
-      // Responds with 403 Forbidden if tokens do not match
       return res.sendStatus(403);
     }
   }
 });
-// Centralized Inbound Processing Engine
-app.post('/webhook', (req, res) => {
+
+// Centralized Inbound Webhook Endpoint
+app.post('/webhook', async (req, res) => {
   const body = req.body;
 
-  // Check if the incoming payload is from Instagram
-  if (body.object === 'instagram') {
-    body.entry.forEach(entry => {
-      // Check if it contains messaging data
-      if (entry.messaging) {
-        const messagingEvent = entry.messaging[0];
-        const senderId = messagingEvent.sender.id; // User's IG Scoped ID
+  try {
+    // 1. Process Instagram Payload
+    if (body.object === 'instagram') {
+      if (body.entry && body.entry[0].messaging) {
+        const messagingEvent = body.entry[0].messaging[0];
+        const senderId = messagingEvent.sender.id;
         
         if (messagingEvent.message && messagingEvent.message.text) {
           const incomingText = messagingEvent.message.text;
           console.log(`Received IG DM from ${senderId}: ${incomingText}`);
-
-          // 🤖 ROUTE TO YOUR BOT INTENT ENGINE HERE
-          // e.g., handleInquiry(senderId, incomingText);
+          
+          // Route immediately to the unified bot logic engine
+          return await handleApplicationBot(req, res, senderId, "Instagram", incomingText);
         }
       }
-    });
+      return res.sendStatus(200);
+    }
 
-    // Always return a 200 OK immediately to stop Meta from retrying
-    return res.status(200).send('EVENT_RECEIVED');
+    // 2. Process WhatsApp Payload
+    if (body.object === 'whatsapp_business_account') {
+      if (body.entry && body.entry[0].changes && body.entry[0].changes[0].value.messages) {
+        const message = body.entry[0].changes[0].value.messages[0];
+        const from = message.from;
+        if (message.type === 'text') {
+          const userMessage = message.text.body;
+          return await handleApplicationBot(req, res, from, "WhatsApp", userMessage);
+        }
+      }
+      return res.sendStatus(200);
+    }
+
+    // 3. Process Messenger Payload
+    if (body.object === 'page') {
+      if (body.entry && body.entry[0].messaging) {
+        const messagingEvent = body.entry[0].messaging[0];
+        const senderId = messagingEvent.sender.id;
+        if (messagingEvent.message && messagingEvent.message.text) {
+          const userMessage = messagingEvent.message.text;
+          return await handleApplicationBot(req, res, senderId, "Messenger", userMessage);
+        }
+      }
+      return res.sendStatus(200);
+    }
+
+    // Unhandled payload type fallback
+    return res.sendStatus(200);
+
+  } catch (error) {
+    console.error("💥 General Webhook Payload Routing Crash:", error.message);
+    if (!res.headersSent) res.sendStatus(500);
   }
-
-  // Handle your existing Messenger / WhatsApp logic below...
 });
 
+// Centralized Core Processing Core Engine
+async function handleApplicationBot(req, res, from, channel, userMessage) {
+  try {
     const lowerMessage = userMessage.toLowerCase();
     const now = new Date();
 
@@ -247,7 +291,7 @@ app.post('/webhook', (req, res) => {
       currentState.name = "";
       currentState.education = "";
       currentState.status = "Active";
-      currentState.vacancyCache = null; // Force vacancy refresh on next message
+      currentState.vacancyCache = null; 
     }
     currentState.lastInteraction = now;
 
@@ -258,7 +302,11 @@ app.post('/webhook', (req, res) => {
       currentState.status = "Closed";
       const exitMsg = "Understood. I have canceled your application setup. Let me know if you need anything else!";
       await logToMonitor(from, channel, "Bot", exitMsg);
-      channel === "Messenger" ? await sendMessenger(from, exitMsg) : await sendWhatsApp(from, exitMsg);
+      
+      if (channel === "Messenger") await sendMessenger(from, exitMsg);
+      else if (channel === "Instagram") await sendInstagram(from, exitMsg);
+      else await sendWhatsApp(from, exitMsg);
+      
       return res.sendStatus(200);
     }
 
@@ -348,7 +396,7 @@ app.post('/webhook', (req, res) => {
 
           const combinedEvaluationPrompt = "EVALUATION TASK INSTRUCTIONS:\n" +
           "You are an internal HR data assistant. Analyze the conversation transcript below against the specific job qualification rules provided.\n\n" +
-          "CRITICAL PRIORITY SCORING PARAMETERS (RETRIEVED FROM KNOWLEDGE BASE):\n" + retrievedJobCriteria + "\n\n" +
+          "CRITICAL PRIORITY SCORING PARAMETERS (RETRIEVED FROM KNOWLEDGE BASE):\n" + (process.env.JOB_CRITERIA || "Standard business criteria evaluation") + "\n\n" +
           "Expected JSON format output:\n" +
           "{\n" +
           "  \"education\": \"1-3 words extraction of highest degree (e.g. BBA Finance, +2 Pass)\",\n" +
@@ -384,7 +432,6 @@ app.post('/webhook', (req, res) => {
 
           console.log(`✨ Groq Priority Calculated: [${detectedPriority}] | Degree: [${currentState.education}]`);
 
-          // Deliver clean mapped entries straight down the pipeline to Google Sheets
           await sendToGoogleSheets(from, currentState.name, currentState.education, finalSummary, detectedPriority, channel);
           
           botResponseText = "Thank you so much! Your application profile details have been securely logged into our system. Our HR team will reach out within 24 hours. Have a wonderful day!";
@@ -404,7 +451,6 @@ app.post('/webhook', (req, res) => {
     // STAGE 0: Normal Chat & Intercept Trigger
     // ==========================================
     } else {
-      // Fetch live vacancies if not already cached for this session
       if (!currentState.vacancyCache) {
         currentState.vacancyCache = await fetchJobVacancies();
       }
@@ -417,7 +463,6 @@ app.post('/webhook', (req, res) => {
     // CENTRALIZED OUTPUT CLEANER & INTERCEPTOR
     // ==========================================
     
-    // 1. Check for application triggers anywhere in the pipeline response
     if (botResponseText.includes("[START_APPLICATION]")) {
       botResponseText = botResponseText.replace("[START_APPLICATION]", "").trim();
       
@@ -428,7 +473,6 @@ app.post('/webhook', (req, res) => {
       }
     }
 
-    // 2. Clear out closing flags cleanly
     if (botResponseText.includes("[CLOSE_CONVERSATION]")) {
       console.log(`Close intercept triggered for ${from}`);
       botResponseText = botResponseText.replace("[CLOSE_CONVERSATION]", "").trim();
@@ -436,23 +480,21 @@ app.post('/webhook', (req, res) => {
       currentState.status = "Closed";
     }
 
-    // 3. Clean up generic markdown artifacts or awkward double spacing
     botResponseText = botResponseText.replace(/\n{3,}/g, "\n\n").trim();
-
-    // Commit to conversation history logs
     currentState.history.push({ role: "model", text: botResponseText });
 
-    // Log complete response down to monitoring sheets tracking
     await logToMonitor(from, channel, "Bot", botResponseText, responseTimeMs, "200 OK");
 
-    // Dispatch clear message payload to user's device
+    // Route dispatch matching channel origin
     if (channel === "Messenger") {
       await sendMessenger(from, botResponseText);
+    } else if (channel === "Instagram") {
+      await sendInstagram(from, botResponseText);
     } else {
       await sendWhatsApp(from, botResponseText);
     }
     
-    return res.sendStatus(200);
+    if (!res.headersSent) return res.sendStatus(200);
 
   } catch (err) {
     console.error("💥 General Route Crash Error:", err?.response?.data || err.message);
@@ -460,7 +502,7 @@ app.post('/webhook', (req, res) => {
       res.sendStatus(500);
     }
   }
-}); // 🟢 FIX 2: Correctly matches the open of app.post('/webhook'...)
+}
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => console.log(`Groq-powered Application Engine active on port ${PORT}`));
