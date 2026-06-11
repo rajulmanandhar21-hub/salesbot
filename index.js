@@ -158,9 +158,7 @@ async function sendMessenger(to, text) {
 // Helper: Send Instagram Message
 async function sendInstagram(to, text) {
   try {
-    // 🟢 Updated to look for the brand new INSTAGRAM_TOKEN env variable
     const token = process.env.INSTAGRAM_TOKEN || process.env.MESSENGER_TOKEN;
-    
     await axios.post(
       `https://graph.facebook.com/v21.0/me/messages?access_token=${token}`, 
       {
@@ -205,70 +203,56 @@ app.get('/webhook', (req, res) => {
   if (mode && token) {
     if (mode === 'subscribe' && token === 'jabbot123') {
       console.log('WEBHOOK_VERIFIED');
-      return res.status(200).send(challenge); // This must send back the exact raw challenge string
+      return res.status(200).send(challenge);
     } else {
-      return res.status(403).sendStatus(403);
+      return res.sendStatus(403);
     }
   }
 });
 
 // Centralized Inbound Webhook Endpoint
+// 🟢 FIXED: Explicitly marked this main callback function as async
 app.post('/webhook', async (req, res) => {
-  // Acknowledge receipt to Meta immediately so they don't keep retrying
-  res.status(200).send('EVENT_RECEIVED');
+  const body = req.body;
 
   try {
-    const entry = req.body?.entry?.[0];
-    if (!entry) return;
+    const entry = body?.entry?.[0];
+    if (!entry) return res.sendStatus(200);
 
-    let from = null;
-    let userMessage = null;
-    let isInstagram = false;
+    // 1. Process Instagram Payload Safely
+    if (body.object === 'instagram') {
+      let from = null;
+      let userMessage = null;
 
-    // 1. Check if it's an Instagram Webhook Structure
-    if (entry.changes && entry.changes[0]?.value) {
-      const value = entry.changes[0].value;
-      
-      // Ignore if it's not a message event
-      if (!value.messages || !value.messages[0]) return;
-      
-      from = value.messages[0].from?.id; // Safely get Instagram Sender ID
-      userMessage = value.messages[0].text;
-      isInstagram = true;
-    } 
-    // 2. Fallback to Facebook Messenger Structure
-    else if (entry.messaging && entry.messaging[0]) {
-      const messaging = entry.messaging[0];
-      from = messaging.sender?.id; // Safely get Facebook Sender ID
-      userMessage = messaging.message?.text;
+      // Instagram wraps messaging events either in messaging array or changes array depending on the configuration
+      if (entry.messaging && entry.messaging[0]) {
+        from = entry.messaging[0].sender?.id;
+        userMessage = entry.messaging[0].message?.text;
+      } else if (entry.changes && entry.changes[0]?.value) {
+        const value = entry.changes[0].value;
+        if (value.messages && value.messages[0]) {
+          from = value.messages[0].from?.id || value.messages[0].sender?.id;
+          userMessage = value.messages[0].text;
+        }
+      }
+
+      if (from && userMessage) {
+        console.log(`Received IG DM from ${from}: ${userMessage}`);
+        await handleApplicationBot(req, res, from, "Instagram", userMessage);
+        return;
+      }
+      return res.sendStatus(200);
     }
-
-    // If we couldn't parse a sender or a message text, stop here safely
-    if (!from || !userMessage) return;
-
-    console.log(`📩 Received message from ${from}: "${userMessage}" (Platform: ${isInstagram ? 'Instagram' : 'Messenger'})`);
-
-    // --- YOUR EXISTING BOT LOGIC HERE ---
-    // Make sure when you call your reply function, you route it right:
-    if (isInstagram) {
-      await sendInstagram(from, "Hi! Thanks for reaching out via Instagram."); 
-    } else {
-      // Your existing Messenger response function
-    }
-
-  } catch (error) {
-    console.error("💥 General Webhook Payload Routing Crash:", error.message);
-  }
-});
 
     // 2. Process WhatsApp Payload
     if (body.object === 'whatsapp_business_account') {
-      if (body.entry && body.entry[0].changes && body.entry[0].changes[0].value.messages) {
-        const message = body.entry[0].changes[0].value.messages[0];
+      if (entry.changes && entry.changes[0].value.messages) {
+        const message = entry.changes[0].value.messages[0];
         const from = message.from;
         if (message.type === 'text') {
           const userMessage = message.text.body;
-          return await handleApplicationBot(req, res, from, "WhatsApp", userMessage);
+          await handleApplicationBot(req, res, from, "WhatsApp", userMessage);
+          return;
         }
       }
       return res.sendStatus(200);
@@ -276,18 +260,18 @@ app.post('/webhook', async (req, res) => {
 
     // 3. Process Messenger Payload
     if (body.object === 'page') {
-      if (body.entry && body.entry[0].messaging) {
-        const messagingEvent = body.entry[0].messaging[0];
-        const senderId = messagingEvent.sender.id;
+      if (entry.messaging && entry.messaging[0]) {
+        const messagingEvent = entry.messaging[0];
+        const senderId = messagingEvent.sender?.id;
         if (messagingEvent.message && messagingEvent.message.text) {
           const userMessage = messagingEvent.message.text;
-          return await handleApplicationBot(req, res, senderId, "Messenger", userMessage);
+          await handleApplicationBot(req, res, senderId, "Messenger", userMessage);
+          return;
         }
       }
       return res.sendStatus(200);
     }
 
-    // Unhandled payload type fallback
     return res.sendStatus(200);
 
   } catch (error) {
