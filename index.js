@@ -202,9 +202,9 @@ app.get('/webhook', (req, res) => {
   if (mode && token) {
     if (mode === 'subscribe' && token === 'jabbot123') {
       console.log('WEBHOOK_VERIFIED');
-      return res.status(200).send(challenge);
+      return res.status(200).send(challenge); // This must send back the exact raw challenge string
     } else {
-      return res.sendStatus(403);
+      return res.status(403).sendStatus(403);
     }
   }
 });
