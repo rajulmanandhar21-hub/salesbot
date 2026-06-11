@@ -214,25 +214,52 @@ app.get('/webhook', (req, res) => {
 
 // Centralized Inbound Webhook Endpoint
 app.post('/webhook', async (req, res) => {
-  const body = req.body;
+  // Acknowledge receipt to Meta immediately so they don't keep retrying
+  res.status(200).send('EVENT_RECEIVED');
 
   try {
-    // 1. Process Instagram Payload
-    if (body.object === 'instagram') {
-      if (body.entry && body.entry[0].messaging) {
-        const messagingEvent = body.entry[0].messaging[0];
-        const senderId = messagingEvent.sender.id;
-        
-        if (messagingEvent.message && messagingEvent.message.text) {
-          const incomingText = messagingEvent.message.text;
-          console.log(`Received IG DM from ${senderId}: ${incomingText}`);
-          
-          // Route immediately to the unified bot logic engine
-          return await handleApplicationBot(req, res, senderId, "Instagram", incomingText);
-        }
-      }
-      return res.sendStatus(200);
+    const entry = req.body?.entry?.[0];
+    if (!entry) return;
+
+    let from = null;
+    let userMessage = null;
+    let isInstagram = false;
+
+    // 1. Check if it's an Instagram Webhook Structure
+    if (entry.changes && entry.changes[0]?.value) {
+      const value = entry.changes[0].value;
+      
+      // Ignore if it's not a message event
+      if (!value.messages || !value.messages[0]) return;
+      
+      from = value.messages[0].from?.id; // Safely get Instagram Sender ID
+      userMessage = value.messages[0].text;
+      isInstagram = true;
+    } 
+    // 2. Fallback to Facebook Messenger Structure
+    else if (entry.messaging && entry.messaging[0]) {
+      const messaging = entry.messaging[0];
+      from = messaging.sender?.id; // Safely get Facebook Sender ID
+      userMessage = messaging.message?.text;
     }
+
+    // If we couldn't parse a sender or a message text, stop here safely
+    if (!from || !userMessage) return;
+
+    console.log(`📩 Received message from ${from}: "${userMessage}" (Platform: ${isInstagram ? 'Instagram' : 'Messenger'})`);
+
+    // --- YOUR EXISTING BOT LOGIC HERE ---
+    // Make sure when you call your reply function, you route it right:
+    if (isInstagram) {
+      await sendInstagram(from, "Hi! Thanks for reaching out via Instagram."); 
+    } else {
+      // Your existing Messenger response function
+    }
+
+  } catch (error) {
+    console.error("💥 General Webhook Payload Routing Crash:", error.message);
+  }
+});
 
     // 2. Process WhatsApp Payload
     if (body.object === 'whatsapp_business_account') {
