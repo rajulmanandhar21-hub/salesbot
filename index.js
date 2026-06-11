@@ -197,28 +197,33 @@ app.get('/webhook', (req, res) => {
   }
 });
 // Centralized Inbound Processing Engine
-app.post('/webhook', async (req, res) => {
-  try {
-    const entry = req.body.entry?.[0];
-    if (!entry) return res.sendStatus(200);
+app.post('/webhook', (req, res) => {
+  const body = req.body;
 
-    let userMessage, from, channel;
+  // Check if the incoming payload is from Instagram
+  if (body.object === 'instagram') {
+    body.entry.forEach(entry => {
+      // Check if it contains messaging data
+      if (entry.messaging) {
+        const messagingEvent = entry.messaging[0];
+        const senderId = messagingEvent.sender.id; // User's IG Scoped ID
+        
+        if (messagingEvent.message && messagingEvent.message.text) {
+          const incomingText = messagingEvent.message.text;
+          console.log(`Received IG DM from ${senderId}: ${incomingText}`);
 
-    const change = entry?.changes?.[0];
-    const waMessage = change?.value?.messages?.[0];
-    const messaging = entry?.messaging?.[0];
+          // 🤖 ROUTE TO YOUR BOT INTENT ENGINE HERE
+          // e.g., handleInquiry(senderId, incomingText);
+        }
+      }
+    });
 
-    if (waMessage && waMessage.type === 'text') {
-      userMessage = waMessage.text.body.trim();
-      from = waMessage.from;
-      channel = "WhatsApp";
-    } else if (messaging && messaging.message && messaging.message.text) {
-      userMessage = messaging.message.text.trim();
-      from = String(messaging.sender.id);
-      channel = "Messenger";
-    } else {
-      return res.sendStatus(200);
-    }
+    // Always return a 200 OK immediately to stop Meta from retrying
+    return res.status(200).send('EVENT_RECEIVED');
+  }
+
+  // Handle your existing Messenger / WhatsApp logic below...
+});
 
     const lowerMessage = userMessage.toLowerCase();
     const now = new Date();
