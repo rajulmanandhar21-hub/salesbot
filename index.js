@@ -158,8 +158,11 @@ async function sendMessenger(to, text) {
 // Helper: Send Instagram Message
 async function sendInstagram(to, text) {
   try {
+    // 🟢 Updated to look for the brand new INSTAGRAM_TOKEN env variable
+    const token = process.env.INSTAGRAM_TOKEN || process.env.MESSENGER_TOKEN;
+    
     await axios.post(
-      `https://graph.facebook.com/v21.0/me/messages?access_token=${process.env.MESSENGER_TOKEN}`, 
+      `https://graph.facebook.com/v21.0/me/messages?access_token=${token}`, 
       {
         recipient: { id: to },
         message: { text: text }
