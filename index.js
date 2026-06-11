@@ -220,14 +220,15 @@ app.get('/webhook', (req, res) => {
 app.post('/webhook', async (req, res) => {
     const body = req.body;
 
-    // 1. IMMEDIATELY acknowledge receipt so Meta/Render never loops or times out
-    res.sendStatus(200);
+    // 1. Send the response IMMEDIATELY right here
+    return;
 
     try {
         const entry = body?.entry?.[0];
-        if (!entry) return; // Exit safely since we already responded with 200
+        // 2. Change 'return res.sendStatus(200);' to a simple 'return;' 
+        if (!entry) return; 
 
-        // 2. Process Instagram Payload Safely
+        // 1. Process Instagram Payload Safely
         if (body.object === 'instagram') {
             let from = null;
             let userMessage = null;
