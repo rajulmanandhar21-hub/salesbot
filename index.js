@@ -179,17 +179,23 @@ async function fetchJobVacancies() {
 
 // Meta webhook verification
 app.get('/webhook', (req, res) => {
+  // Extract query parameters from Meta's verification request
   const mode = req.query['hub.mode'];
   const token = req.query['hub.verify_token'];
   const challenge = req.query['hub.challenge'];
-  if (mode === 'subscribe' && token === VERIFY_TOKEN) {
-    console.log('Webhook verified!');
-    res.status(200).send(challenge);
-  } else {
-    res.sendStatus(403);
+
+  // Check if the mode and token match your custom verify token ("jabbot123")
+  if (mode && token) {
+    if (mode === 'subscribe' && token === 'jabbot123') {
+      console.log('WEBHOOK_VERIFIED');
+      // You MUST send back the challenge as a raw string with a 200 OK status
+      return res.status(200).send(challenge);
+    } else {
+      // Responds with 403 Forbidden if tokens do not match
+      return res.sendStatus(403);
+    }
   }
 });
-
 // Centralized Inbound Processing Engine
 app.post('/webhook', async (req, res) => {
   try {
