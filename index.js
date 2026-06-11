@@ -201,10 +201,15 @@ app.get('/webhook', (req, res) => {
   const challenge = req.query['hub.challenge'];
 
   if (mode && token) {
-    if (mode === 'subscribe' && token === 'jabbot123') {
-      console.log('WEBHOOK_VERIFIED');
+    // 💡 Checks for both spelling variations to be absolutely safe
+    if (mode === 'subscribe' && (token === 'jobbot123' || token === 'jabbot123')) {
+      console.log('🚀 WEBHOOK LOCK: Handshake matches successfully!');
+      
+      // 🔒 CRITICAL FIX: Force header type to plain text so Meta reads it natively
+      res.set('Content-Type', 'text/plain');
       return res.status(200).send(challenge);
     } else {
+      console.warn('⚠️ Webhook handshake rejected: Token mismatch.');
       return res.sendStatus(403);
     }
   }
