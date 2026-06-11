@@ -218,16 +218,21 @@ app.get('/webhook', (req, res) => {
 // Centralized Inbound Webhook Endpoint
 // 🟢 FIXED: Explicitly marked this main callback function as async
 app.post('/webhook', async (req, res) => {
-  const body = req.body;
+    const body = req.body;
 
-  try {
-    const entry = body?.entry?.[0];
-    if (!entry) return res.sendStatus(200);
+    // 1. IMMEDIATELY acknowledge receipt so Meta/Render never loops or times out
+    res.sendStatus(200);
 
-    // 1. Process Instagram Payload Safely
-    if (body.object === 'instagram') {
-      let from = null;
-      let userMessage = null;
+    try {
+        const entry = body?.entry?.[0];
+        if (!entry) return; // Exit safely since we already responded with 200
+
+        // 2. Process Instagram Payload Safely
+        if (body.object === 'instagram') {
+            let from = null;
+            let userMessage = null;
+            
+            // Your remaining messaging/changes array extraction logic below...
 
       // Instagram wraps messaging events either in messaging array or changes array depending on the configuration
       if (entry.messaging && entry.messaging[0]) {
