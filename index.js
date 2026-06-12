@@ -1,5 +1,8 @@
 const express = require('express');
 const axios = require('axios');
+const { Groq } = require('groq-sdk'); // ✅ FIXED: Added Groq SDK import
+const { GoogleGenAI } = require('@google/genai'); // ✅ FIXED: Added Gemini SDK import
+
 const app = express();
 app.use(express.json());
 
@@ -7,7 +10,12 @@ const VERIFY_TOKEN = "jobbot123";
 const WHATSAPP_TOKEN = process.env.WHATSAPP_TOKEN;
 const PHONE_NUMBER_ID = process.env.PHONE_NUMBER_ID;
 const GROQ_API_KEY = process.env.GROQ_API_KEY;
-const SYSTEM_PROMPT = process.env.SYSTEM_PROMPT;
+const GEMINI_API_KEY = process.env.GEMINI_API_KEY; // Ensure this is set in Render
+const SYSTEM_PROMPT = process.env.SYSTEM_PROMPT || "You are an HR assistant.";
+
+// ✅ FIXED: Initialize client instances safely
+const groq = new Groq({ apiKey: GROQ_API_KEY });
+const ai = new GoogleGenAI({ apiKey: GEMINI_API_KEY });
 
 // In-memory application state tracker
 const applicationState = {};
@@ -35,16 +43,24 @@ async function logToMonitor(sessionId, channel, sender, messageText, responseTim
 }
 
 // Helper: Ask Groq Cloud (Llama 3.3 70B) with Balanced Gemini Failover
-async function askGroq(promptText) {
+// ✅ FIXED: Parameter structured to accept contextual vacancy data dynamically
+async function askGroq(promptText, vacancyContext = "", customSystem = null) {
   let isRateLimit = false;
   let groqResult = null;
+
+  // Build a highly descriptive system baseline instruction
+  const finalSystemInstruction = customSystem || 
+    `${SYSTEM_PROMPT}\n\nCURRENT LIVE VACANCY CONTEXT:\n${vacancyContext || "No alternative vacancy specs provided."}`;
 
   // 1. Primary Execution via Groq
   try {
     console.log("🚀 Attempting primary processing via Groq Cloud...");
     
     const groqResponse = await groq.chat.completions.create({
-      messages: [{ role: "user", content: promptText }],
+      messages: [
+        { role: "system", content: finalSystemInstruction },
+        { role: "user", content: promptText }
+      ],
       model: "llama-3.3-70b-versatile",
       temperature: 0.1,
     });
@@ -61,19 +77,16 @@ async function askGroq(promptText) {
     console.warn("⚠️ Groq Rate Limit Exceeded! Shifting over to execute backup track...");
   }
 
-  // Return the groq result early if it succeeded
-  if (groqResult) {
-    return groqResult;
-  }
+  if (groqResult) return groqResult;
 
-  // 2. Fallover Execution via Gemini
+  // 2. Fallback Execution via Gemini
   if (isRateLimit) {
     try {
       const backupStartTime = Date.now();
       
       const geminiResponse = await ai.models.generateContent({
         model: "gemini-1.5-flash",
-        contents: promptText,
+        contents: `${finalSystemInstruction}\n\nUser Message: ${promptText}`,
       });
       
       const backupResponseTimeMs = Date.now() - backupStartTime;
@@ -180,14 +193,11 @@ async function fetchJobVacancies() {
       console.warn("⚠️ VACANCY_DOC_ID not set. Using system prompt only.");
       return null;
     }
-
     const response = await axios.get(
       `https://docs.google.com/document/d/${docId}/export?format=txt`
     );
-
     console.log("📄 Vacancy doc fetched successfully.");
     return response.data;
-
   } catch (err) {
     console.warn("⚠️ Failed to fetch vacancy doc:", err.message);
     return null;
@@ -201,11 +211,8 @@ app.get('/webhook', (req, res) => {
   const challenge = req.query['hub.challenge'];
 
   if (mode && token) {
-    // 💡 Checks for both spelling variations to be absolutely safe
     if (mode === 'subscribe' && (token === 'jobbot123' || token === 'jabbot123')) {
       console.log('🚀 WEBHOOK LOCK: Handshake matches successfully!');
-      
-      // 🔒 CRITICAL FIX: Force header type to plain text so Meta reads it natively
       res.set('Content-Type', 'text/plain');
       return res.status(200).send(challenge);
     } else {
@@ -216,26 +223,21 @@ app.get('/webhook', (req, res) => {
 });
 
 // Centralized Inbound Webhook Endpoint
-// 🟢 FIXED: Explicitly marked this main callback function as async
 app.post('/webhook', async (req, res) => {
-    const body = req.body;
+  const body = req.body;
 
-    // 1. Send the response IMMEDIATELY right here
-    return;
+  // 1. Send the response IMMEDIATELY right here to prevent timeouts
+  res.sendStatus(200);
 
-    try {
-        const entry = body?.entry?.[0];
-        // 2. Change 'return res.sendStatus(200);' to a simple 'return;' 
-        if (!entry) return; 
+  try {
+    const entry = body?.entry?.[0];
+    if (!entry) return; 
 
-        // 1. Process Instagram Payload Safely
-        if (body.object === 'instagram') {
-            let from = null;
-            let userMessage = null;
-            
-            // Your remaining messaging/changes array extraction logic below...
+    // 1. Process Instagram Payload Safely
+    if (body.object === 'instagram') {
+      let from = null;
+      let userMessage = null;
 
-      // Instagram wraps messaging events either in messaging array or changes array depending on the configuration
       if (entry.messaging && entry.messaging[0]) {
         from = entry.messaging[0].sender?.id;
         userMessage = entry.messaging[0].message?.text;
@@ -250,10 +252,9 @@ app.post('/webhook', async (req, res) => {
       if (from && userMessage) {
         console.log(`Received IG DM from ${from}: ${userMessage}`);
         await handleApplicationBot(req, res, from, "Instagram", userMessage);
-        return;
       }
-      return res.sendStatus(200);
-    }
+      return; // ✅ FIXED: Replaced header-clashing res.sendStatus(200) with return
+    } // ✅ FIXED: Added missing closing bracket for Instagram block
 
     // 2. Process WhatsApp Payload
     if (body.object === 'whatsapp_business_account') {
@@ -263,10 +264,9 @@ app.post('/webhook', async (req, res) => {
         if (message.type === 'text') {
           const userMessage = message.text.body;
           await handleApplicationBot(req, res, from, "WhatsApp", userMessage);
-          return;
         }
       }
-      return res.sendStatus(200);
+      return; // ✅ FIXED: Standard clean functional exit
     }
 
     // 3. Process Messenger Payload
@@ -277,17 +277,13 @@ app.post('/webhook', async (req, res) => {
         if (messagingEvent.message && messagingEvent.message.text) {
           const userMessage = messagingEvent.message.text;
           await handleApplicationBot(req, res, senderId, "Messenger", userMessage);
-          return;
         }
       }
-      return res.sendStatus(200);
+      return; // ✅ FIXED: Standard clean functional exit
     }
-
-    return res.sendStatus(200);
 
   } catch (error) {
     console.error("💥 General Webhook Payload Routing Crash:", error.message);
-    if (!res.headersSent) res.sendStatus(500);
   }
 });
 
@@ -332,13 +328,13 @@ async function handleApplicationBot(req, res, from, channel, userMessage) {
       else if (channel === "Instagram") await sendInstagram(from, exitMsg);
       else await sendWhatsApp(from, exitMsg);
       
-      return res.sendStatus(200);
+      return; // ✅ FIXED: Avoid sending duplicate HTTP status
     }
 
     // Closed session protector
     if (currentState.status === "Closed") {
       console.log(`User ${from} opted out. Ignoring message.`);
-      return res.sendStatus(200);
+      return; // ✅ FIXED: Avoid sending duplicate HTTP status
     }
 
     let botResponseText = "";
@@ -358,7 +354,8 @@ async function handleApplicationBot(req, res, from, channel, userMessage) {
       - Reply with only the single word: CANCEL, QUESTION, or NAME
       - No punctuation, no explanation, nothing else`;
       
-      const result = await askGroq(classificationPrompt);
+      // ✅ FIXED: Passed vacancy and default context parameters to ensure askGroq doesn't crash
+      const result = await askGroq(classificationPrompt, "", "You are a single word classification script.");
       const stage1Class = result.replyText.trim().toUpperCase().split(/\s+/)[0];
       responseTimeMs += result.responseTimeMs;
 
@@ -367,7 +364,7 @@ async function handleApplicationBot(req, res, from, channel, userMessage) {
         currentState.status = "Closed";
         botResponseText = "No problem at all! I have stopped the application process. Feel free to reach out whenever you're ready.";
       } else if (stage1Class === "QUESTION") {
-        const answerResult = await askGroq(`You are an HR assistant. A job applicant asked this during the application process: "${userMessage}". Answer helpfully, then remind them to please provide their full name to continue.`);
+        const answerResult = await askGroq(`You are an HR assistant. A job applicant asked this during the application process: "${userMessage}". Answer helpfully, then remind them to please provide their full name to continue.`, currentState.vacancyCache);
         botResponseText = answerResult.replyText;
       } else {
         currentState.name = userMessage;
@@ -392,7 +389,7 @@ async function handleApplicationBot(req, res, from, channel, userMessage) {
         STRICT RULES: Output exactly one word only.`;
 
         console.log("🔍 Classifying Stage 2 message via Groq...");
-        const classResult = await askGroq(classificationPrompt);
+        const classResult = await askGroq(classificationPrompt, "", "You are an automated categorization filter.");
         classification = classResult.replyText.trim().toUpperCase().split(/\s+/)[0];
       } catch (classError) {
         console.warn("⚠️ Classification failed, assuming ANSWER placeholder.");
@@ -406,7 +403,7 @@ async function handleApplicationBot(req, res, from, channel, userMessage) {
       } else if (classification === "QUESTION") {
         try {
           const answerPrompt = `You are an HR assistant. A job applicant asked this question about their qualification during an application: "${userMessage}". Answer their concern helpfully and honestly based on the job details you know. At the end of your answer, remind them to please provide their highest educational qualification to continue their application...`;
-          const answerResult = await askGroq(answerPrompt);
+          const answerResult = await askGroq(answerPrompt, currentState.vacancyCache);
           botResponseText = answerResult.replyText;
         } catch (error) {
           botResponseText = "I received your question. Could you please state your highest qualification directly so we can finish logging your profile details?";
@@ -430,7 +427,7 @@ async function handleApplicationBot(req, res, from, channel, userMessage) {
           "}\n\n" +
           "TRANSCRIPT TO EVALUATE:\n" + formattedTranscript;
 
-          const evaluationResult = await askGroq(combinedEvaluationPrompt);
+          const evaluationResult = await askGroq(combinedEvaluationPrompt, "", "You are a structured data analysis bot that outputs raw JSON only.");
           responseTimeMs += evaluationResult.responseTimeMs;
           
           let parsedData;
@@ -479,6 +476,7 @@ async function handleApplicationBot(req, res, from, channel, userMessage) {
       if (!currentState.vacancyCache) {
         currentState.vacancyCache = await fetchJobVacancies();
       }
+      // ✅ FIXED: Correctly matching the two parameters expected by the updated askGroq handler
       const result = await askGroq(userMessage, currentState.vacancyCache);
       botResponseText = result.replyText;
       responseTimeMs = result.responseTimeMs;
@@ -518,14 +516,9 @@ async function handleApplicationBot(req, res, from, channel, userMessage) {
     } else {
       await sendWhatsApp(from, botResponseText);
     }
-    
-    if (!res.headersSent) return res.sendStatus(200);
 
   } catch (err) {
     console.error("💥 General Route Crash Error:", err?.response?.data || err.message);
-    if (!res.headersSent) {
-      res.sendStatus(500);
-    }
   }
 }
 
