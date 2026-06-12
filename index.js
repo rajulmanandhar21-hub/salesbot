@@ -225,7 +225,8 @@ app.get('/webhook', (req, res) => {
 // Centralized Inbound Webhook Endpoint
 app.post('/webhook', async (req, res) => {
   const body = req.body;
-
+  console.log("📨 INCOMING WEBHOOK OBJECT TYPE:", body.object);
+  console.log("📨 FULL PAYLOAD:", JSON.stringify(body, null, 2));
   // 1. Send the response IMMEDIATELY right here to prevent timeouts
   res.sendStatus(200);
 
