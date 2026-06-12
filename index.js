@@ -235,14 +235,24 @@ app.post('/webhook', async (req, res) => {
     if (!entry) return; 
 
     // 1. Process Instagram Payload Safely
-    if (body.object === 'instagram') {
-      let from = null;
-      let userMessage = null;
+      if (body.object === 'instagram') {
+  let from = null;
+  let userMessage = null;
 
-      if (entry.messaging && entry.messaging[0]) {
-        from = entry.messaging[0].sender?.id;
-        userMessage = entry.messaging[0].message?.text;
-      } else if (entry.changes && entry.changes[0]?.value) {
+  if (entry.messaging && entry.messaging[0]) {
+    const messagingEvent = entry.messaging[0];
+    
+    // Skip non-message events (edits, reads, reactions etc)
+    if (!messagingEvent.message || messagingEvent.message_edit) {
+      console.log("⏭️ Skipping non-text Instagram event");
+      return;
+    }
+    
+    from = messagingEvent.sender?.id;
+    userMessage = messagingEvent.message?.text;
+  }
+      
+      else if (entry.changes && entry.changes[0]?.value) {
         const value = entry.changes[0].value;
         if (value.messages && value.messages[0]) {
           from = value.messages[0].from?.id || value.messages[0].sender?.id;
