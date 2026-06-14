@@ -227,6 +227,7 @@ app.post('/webhook', async (req, res) => {
   const body = req.body;
   console.log("📨 INCOMING WEBHOOK OBJECT TYPE:", body.object);
   console.log("📨 FULL PAYLOAD:", JSON.stringify(body, null, 2));
+  
   // 1. Send the response IMMEDIATELY right here to prevent timeouts
   res.sendStatus(200);
 
@@ -235,23 +236,24 @@ app.post('/webhook', async (req, res) => {
     if (!entry) return; 
 
     // 1. Process Instagram Payload Safely
-      if (body.object === 'instagram') {
-  let from = null;
-  let userMessage = null;
+    if (body.object === 'instagram') {
+      let from = null;
+      let userMessage = null;
 
-  if (entry.messaging && entry.messaging[0]) {
-    const messagingEvent = entry.messaging[0];
-    
-    // Skip non-message events (edits, reads, reactions etc)
-    if (!messagingEvent.message || messagingEvent.message_edit) {
-      console.log("⏭️ Skipping non-text Instagram event");
-      return;
-    }
-    
-    from = messagingEvent.sender?.id;
-    userMessage = messagingEvent.message?.text;
-  }
-      
+      if (entry.messaging && entry.messaging[0]) {
+        const messagingEvent = entry.messaging[0];
+        
+        // ✅ FIXED: Safely intercept both 'message' and 'message_edit' payload architectures
+        const embeddedMessage = messagingEvent.message || messagingEvent.message_edit;
+        
+        if (!embeddedMessage || !embeddedMessage.text) {
+          console.log("⏭️ Skipping non-text Instagram event");
+          return;
+        }
+        
+        from = messagingEvent.sender?.id;
+        userMessage = embeddedMessage.text;
+      } 
       else if (entry.changes && entry.changes[0]?.value) {
         const value = entry.changes[0].value;
         if (value.messages && value.messages[0]) {
@@ -264,8 +266,8 @@ app.post('/webhook', async (req, res) => {
         console.log(`Received IG DM from ${from}: ${userMessage}`);
         await handleApplicationBot(req, res, from, "Instagram", userMessage);
       }
-      return; // ✅ FIXED: Replaced header-clashing res.sendStatus(200) with return
-    } // ✅ FIXED: Added missing closing bracket for Instagram block
+      return; // ✅ FIXED: Standard clean functional exit
+    } 
 
     // 2. Process WhatsApp Payload
     if (body.object === 'whatsapp_business_account') {
