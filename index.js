@@ -235,7 +235,7 @@ app.post('/webhook', async (req, res) => {
     const entry = body?.entry?.[0];
     if (!entry) return; 
 
-    // 1. Process Instagram Payload Safely
+   // 1. Process Instagram Payload Safely
     if (body.object === 'instagram') {
       let from = null;
       let userMessage = null;
@@ -243,11 +243,12 @@ app.post('/webhook', async (req, res) => {
       if (entry.messaging && entry.messaging[0]) {
         const messagingEvent = entry.messaging[0];
         
-        // ✅ FIXED: Safely intercept both 'message' and 'message_edit' payload architectures
+        // Find whichever message payload block is populated (fresh message or edited message)
         const embeddedMessage = messagingEvent.message || messagingEvent.message_edit;
         
+        // ✅ FIXED GATEKEEPER: Only skip if BOTH blocks are completely missing text strings
         if (!embeddedMessage || !embeddedMessage.text) {
-          console.log("⏭️ Skipping non-text Instagram event");
+          console.log("⏭️ Skipping truly non-text Instagram event");
           return;
         }
         
@@ -266,8 +267,8 @@ app.post('/webhook', async (req, res) => {
         console.log(`Received IG DM from ${from}: ${userMessage}`);
         await handleApplicationBot(req, res, from, "Instagram", userMessage);
       }
-      return; // ✅ FIXED: Standard clean functional exit
-    } 
+      return; 
+    }
 
     // 2. Process WhatsApp Payload
     if (body.object === 'whatsapp_business_account') {
