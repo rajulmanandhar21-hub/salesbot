@@ -235,7 +235,7 @@ app.post('/webhook', async (req, res) => {
     const entry = body?.entry?.[0];
     if (!entry) return; 
 
-   // 1. Process Instagram Payload Safely
+// 1. Process Instagram Payload Safely
     if (body.object === 'instagram') {
       let from = null;
       let userMessage = null;
@@ -243,17 +243,17 @@ app.post('/webhook', async (req, res) => {
       if (entry.messaging && entry.messaging[0]) {
         const messagingEvent = entry.messaging[0];
         
-        // Find whichever message payload block is populated (fresh message or edited message)
+        // Check both message blocks safely
         const embeddedMessage = messagingEvent.message || messagingEvent.message_edit;
         
-        // ✅ FIXED GATEKEEPER: Only skip if BOTH blocks are completely missing text strings
-        if (!embeddedMessage || !embeddedMessage.text) {
-          console.log("⏭️ Skipping truly non-text Instagram event");
+        if (!embeddedMessage) {
+          console.log("⏭️ Skipping non-message Instagram event");
           return;
         }
-        
+
         from = messagingEvent.sender?.id;
-        userMessage = embeddedMessage.text;
+        // Accept EITHER standard text or an edited text string
+        userMessage = embeddedMessage.text; 
       } 
       else if (entry.changes && entry.changes[0]?.value) {
         const value = entry.changes[0].value;
@@ -263,9 +263,12 @@ app.post('/webhook', async (req, res) => {
         }
       }
 
-      if (from && userMessage) {
-        console.log(`Received IG DM from ${from}: ${userMessage}`);
-        await handleApplicationBot(req, res, from, "Instagram", userMessage);
+      // Final logging check
+      if (from) {
+        console.log(`📩 Raw Event captured from ${from}. Text found: "${userMessage || 'UNDEFINED/NULL'}"`);
+        if (userMessage) {
+          await handleApplicationBot(req, res, from, "Instagram", userMessage);
+        }
       }
       return; 
     }
