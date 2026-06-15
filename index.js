@@ -157,7 +157,7 @@ async function sendMessenger(to, text) {
   try {
     // Replace YOUR_ACTUAL_FACEBOOK_PAGE_ID with your numeric Page ID
     await axios.post(
-      `https://graph.facebook.com/v19.0/YOUR_ACTUAL_FACEBOOK_PAGE_ID/messages?access_token=${process.env.MESSENGER_TOKEN}`,
+      `https://graph.facebook.com/v19.0/61590463751023/messages?access_token=${process.env.MESSENGER_TOKEN}`,
       {
         recipient: { id: to },
         message: { text: text }
