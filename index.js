@@ -155,8 +155,9 @@ async function sendWhatsApp(to, text) {
 // Helper: Send Messenger message
 async function sendMessenger(to, text) {
   try {
+    // Replace YOUR_ACTUAL_FACEBOOK_PAGE_ID with your numeric Page ID
     await axios.post(
-      `https://graph.facebook.com/v19.0/me/messages?access_token=${process.env.MESSENGER_TOKEN}`,
+      `https://graph.facebook.com/v19.0/YOUR_ACTUAL_FACEBOOK_PAGE_ID/messages?access_token=${process.env.MESSENGER_TOKEN}`,
       {
         recipient: { id: to },
         message: { text: text }
@@ -167,7 +168,6 @@ async function sendMessenger(to, text) {
     console.error("❌ Messenger dispatch failed:", err.response?.data || err.message);
   }
 }
-
 // Helper: Send Instagram Message
 async function sendInstagram(to, text) {
   try {
