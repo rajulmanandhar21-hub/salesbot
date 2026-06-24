@@ -50,7 +50,7 @@ async function askGroq(promptText, vacancyContext = "", customSystem = null) {
   const finalSystemInstruction = customSystem || 
     `${SYSTEM_PROMPT}\n\nCURRENT LIVE VACANCY CONTEXT:\n${vacancyContext || "No alternative vacancy specs provided."}`;
 
-  // 1. Primary Execution via Groq (Testing with the ultra-stable 8B model)
+  // 1. Primary Execution via Groq (Using the rock-solid standard 8B endpoint)
   try {
     console.log("🚀 Attempting primary processing via Groq Cloud...");
     
@@ -59,7 +59,7 @@ async function askGroq(promptText, vacancyContext = "", customSystem = null) {
         { role: "system", content: finalSystemInstruction },
         { role: "user", content: promptText }
       ],
-      model: "llama-3.1-8b-instant", // ⚡ Swapped to ultra-stable fast model to isolate key/network issues
+      model: "llama3-8b-8192", // ⚡ Swapped to the most stable, high-availability Groq endpoint
       temperature: 0.1,
     });
     
@@ -74,15 +74,15 @@ async function askGroq(promptText, vacancyContext = "", customSystem = null) {
 
   if (groqResult) return groqResult;
 
-  // 2. Fallback Execution via Gemini with 503 Retry Protection
+  // 2. Fallback Execution via Gemini with 1.5-Flash High-Availability
   if (isRateLimit) {
-    let attempts = 2; // Try up to 2 times if Google hits a high-demand spike
+    let attempts = 2; 
     while (attempts > 0) {
       try {
         const backupStartTime = Date.now();
         
         const geminiResponse = await ai.models.generateContent({
-          model: "gemini-2.5-flash", 
+          model: "gemini-1.5-flash", // 🚀 Swapped to 1.5-flash for maximum availability away from 2.5 traffic jams
           contents: promptText,
           config: {
             systemInstruction: finalSystemInstruction
@@ -100,7 +100,6 @@ async function askGroq(promptText, vacancyContext = "", customSystem = null) {
         attempts--;
         console.warn(`⚠️ Gemini route hit an issue (${geminiError.message}). Attempts remaining: ${attempts}`);
         if (attempts > 0) {
-          // Wait 1.5 seconds before retrying the high demand spike
           await new Promise(resolve => setTimeout(resolve, 1500));
         } else {
           console.error("🚨 Critical Error: Both Groq and Gemini providers failed entirely.");
