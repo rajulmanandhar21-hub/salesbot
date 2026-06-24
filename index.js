@@ -50,29 +50,36 @@ async function askGroq(promptText, vacancyContext = "", customSystem = null) {
   const finalSystemInstruction = customSystem || 
     `${SYSTEM_PROMPT}\n\nCURRENT LIVE VACANCY CONTEXT:\n${vacancyContext || "No alternative vacancy specs provided."}`;
 
-  // 1. Primary Execution via Groq (Using the correct live active model identifier)
+  // 1. Primary Execution via Groq (Using raw HTTP to bypass SDK network drops)
   try {
-    console.log("🚀 Attempting primary processing via Groq Cloud...");
+    console.log("🚀 Attempting primary processing via Groq Cloud raw HTTP...");
     
-    const groqResponse = await groq.chat.completions.create({
-      messages: [
-        { role: "system", content: finalSystemInstruction },
-        { role: "user", content: promptText }
-      ],
-      model: "llama-3.1-8b-instant", // ⚡ FIXED: Updated to active live model string
-      temperature: 0.1,
-    });
+    const groqResponse = await axios.post(
+      "https://api.groq.com/openai/v1/chat/completions",
+      {
+        model: "llama-3.1-8b-instant",
+        messages: [
+          { role: "system", content: finalSystemInstruction },
+          { role: "user", content: promptText }
+        ],
+        temperature: 0.1
+      },
+      {
+        headers: {
+          "Authorization": `Bearer ${GROQ_API_KEY}`,
+          "Content-Type": "application/json"
+        }
+      }
+    );
     
     groqResult = {
-      replyText: groqResponse.choices[0].message.content,
+      replyText: groqResponse.data.choices[0].message.content,
       responseTimeMs: 0
     };
   } catch (error) {
-    console.warn(`⚠️ Groq Issue encountered (${error.message})! Shifting over to execute backup track...`);
+    console.warn(`⚠️ Groq HTTP Issue encountered (${error.message})! Shifting over to execute backup track...`);
     isRateLimit = true; 
   }
-
-  if (groqResult) return groqResult;
 
   // 2. Fallback Execution via Gemini using the current SDK format
   if (isRateLimit) {
