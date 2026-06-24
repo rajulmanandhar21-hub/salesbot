@@ -52,7 +52,7 @@ async function askGroq(promptText, vacancyContext = "", customSystem = null) {
   const finalSystemInstruction = customSystem || 
     `${SYSTEM_PROMPT}\n\nCURRENT LIVE VACANCY CONTEXT:\n${vacancyContext || "No alternative vacancy specs provided."}`;
 
- // 1. Primary Execution via Groq
+  // 1. Primary Execution via Groq
   try {
     console.log("🚀 Attempting primary processing via Groq Cloud...");
     
@@ -70,21 +70,9 @@ async function askGroq(promptText, vacancyContext = "", customSystem = null) {
       responseTimeMs: 0
     };
   } catch (error) {
-    // 🧠 FIXED: Shifting over to execution backup track for ANY connection failure/drop
+    // 🧠 FIXED: Shifting over to execution backup track for ANY connection failure/drop or premature close
     console.warn(`⚠️ Groq Issue encountered (${error.message})! Shifting over to execute backup track...`);
     isRateLimit = true; 
-  }
-    
-    groqResult = {
-      replyText: groqResponse.choices[0].message.content,
-      responseTimeMs: 0
-    };
-  } catch (error) {
-    isRateLimit = error.status === 429 || (error.message && error.message.includes("rate_limit"));
-    if (!isRateLimit) {
-      throw error;
-    }
-    console.warn("⚠️ Groq Rate Limit Exceeded! Shifting over to execute backup track...");
   }
 
   if (groqResult) return groqResult;
@@ -112,7 +100,6 @@ async function askGroq(promptText, vacancyContext = "", customSystem = null) {
     }
   }
 }
-
 // Helper: Send structured leads straight to your specific Apps Script routing channel
 async function sendToGoogleSheets(phone, name, education, chatSummary, priority, channel) {
   try {
