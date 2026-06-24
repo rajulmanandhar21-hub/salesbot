@@ -56,14 +56,14 @@ async function askGroq(promptText, vacancyContext = "", customSystem = null) {
   try {
     console.log("🚀 Attempting primary processing via Groq Cloud...");
     
-    const groqResponse = await groq.chat.completions.create({
-      messages: [
-        { role: "system", content: finalSystemInstruction },
-        { role: "user", content: promptText }
-      ],
-      model: "llama-3.3-70b-specdec", // Stable ID
-      temperature: 0.1,
-    });
+   const groqResponse = await groq.chat.completions.create({
+  messages: [
+    { role: "system", content: finalSystemInstruction },
+    { role: "user", content: promptText }
+  ],
+  model: "llama-3.3-70b-versatile", // ✨ Updated to active stable model
+  temperature: 0.1,
+});
     
     groqResult = {
       replyText: groqResponse.choices[0].message.content,
@@ -83,9 +83,9 @@ async function askGroq(promptText, vacancyContext = "", customSystem = null) {
       const backupStartTime = Date.now();
       
       const geminiResponse = await ai.models.generateContent({
-        model: "gemini-1.5-flash",
-        contents: `${finalSystemInstruction}\n\nUser Message: ${promptText}`,
-      });
+  model: "gemini-2.5-flash", // ✨ Fixed SDK string format & updated to 2.5
+  contents: `${finalSystemInstruction}\n\nUser Message: ${promptText}`,
+});
       
       const backupResponseTimeMs = Date.now() - backupStartTime;
       console.log("✅ Backup evaluation completed successfully via Gemini!");
