@@ -42,7 +42,7 @@ async function logToMonitor(sessionId, channel, sender, messageText, responseTim
   }
 }
 
-// Helper: Ask Groq Cloud with Balanced Gemini Failover
+// Helper: Ask Groq Cloud with Balanced Gemini Failover & Auto-Retry
 async function askGroq(promptText, vacancyContext = "", customSystem = null) {
   let isRateLimit = false;
   let groqResult = null;
@@ -50,7 +50,7 @@ async function askGroq(promptText, vacancyContext = "", customSystem = null) {
   const finalSystemInstruction = customSystem || 
     `${SYSTEM_PROMPT}\n\nCURRENT LIVE VACANCY CONTEXT:\n${vacancyContext || "No alternative vacancy specs provided."}`;
 
-  // 1. Primary Execution via Groq
+  // 1. Primary Execution via Groq (Testing with the ultra-stable 8B model)
   try {
     console.log("🚀 Attempting primary processing via Groq Cloud...");
     
@@ -59,7 +59,7 @@ async function askGroq(promptText, vacancyContext = "", customSystem = null) {
         { role: "system", content: finalSystemInstruction },
         { role: "user", content: promptText }
       ],
-      model: "llama-3.3-70b-versatile", // Stable model replacement ID
+      model: "llama-3.1-8b-instant", // ⚡ Swapped to ultra-stable fast model to isolate key/network issues
       temperature: 0.1,
     });
     
@@ -74,52 +74,40 @@ async function askGroq(promptText, vacancyContext = "", customSystem = null) {
 
   if (groqResult) return groqResult;
 
-  // 2. Fallback Execution via Gemini
+  // 2. Fallback Execution via Gemini with 503 Retry Protection
   if (isRateLimit) {
-    try {
-      const backupStartTime = Date.now();
-      
-      // Fixed SDK configuration structure format
-      const geminiResponse = await ai.models.generateContent({
-        model: "gemini-2.5-flash", 
-        contents: promptText,
-        config: {
-          systemInstruction: finalSystemInstruction
+    let attempts = 2; // Try up to 2 times if Google hits a high-demand spike
+    while (attempts > 0) {
+      try {
+        const backupStartTime = Date.now();
+        
+        const geminiResponse = await ai.models.generateContent({
+          model: "gemini-2.5-flash", 
+          contents: promptText,
+          config: {
+            systemInstruction: finalSystemInstruction
+          }
+        });
+        
+        const backupResponseTimeMs = Date.now() - backupStartTime;
+        console.log("✅ Backup evaluation completed successfully via Gemini!");
+        
+        return {
+          replyText: geminiResponse.text,
+          responseTimeMs: backupResponseTimeMs
+        };
+      } catch (geminiError) {
+        attempts--;
+        console.warn(`⚠️ Gemini route hit an issue (${geminiError.message}). Attempts remaining: ${attempts}`);
+        if (attempts > 0) {
+          // Wait 1.5 seconds before retrying the high demand spike
+          await new Promise(resolve => setTimeout(resolve, 1500));
+        } else {
+          console.error("🚨 Critical Error: Both Groq and Gemini providers failed entirely.");
+          throw geminiError;
         }
-      });
-      
-      const backupResponseTimeMs = Date.now() - backupStartTime;
-      console.log("✅ Backup evaluation completed successfully via Gemini!");
-      
-      return {
-        replyText: geminiResponse.text,
-        responseTimeMs: backupResponseTimeMs
-      };
-    } catch (geminiError) {
-      console.error("🚨 Critical Error: Both Groq and Gemini providers failed entirely.", geminiError.message);
-      throw geminiError;
-    }
-  }
-}
-
-// Helper: Send WhatsApp message
-async function sendWhatsApp(to, text) {
-  try {
-    await axios.post(
-      `https://graph.facebook.com/v19.0/${PHONE_NUMBER_ID}/messages`,
-      {
-        messaging_product: "whatsapp",
-        to: to,
-        type: "text",
-        text: { body: text }
-      },
-      {
-        headers: { Authorization: `Bearer ${WHATSAPP_TOKEN}` }
       }
-    );
-    console.log(`📲 Outbound WhatsApp ping delivered to ${to}`);
-  } catch (err) {
-    console.error("❌ WhatsApp dispatch failed:", err.response?.data || err.message);
+    }
   }
 }
 
