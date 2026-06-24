@@ -103,12 +103,14 @@ async function askGroq(promptText, vacancyContext = "", customSystem = null) {
           await new Promise(resolve => setTimeout(resolve, 1500));
         } else {
           console.error("🚨 Critical Error: Both Groq and Gemini providers failed entirely.");
-          throw geminiError;
+          
+          // Safely return text instead of throwing an unhandled error exception!
+          return {
+            replyText: "I'm experiencing a minor connection hiccup right now. Could you please send that message one more time?",
+            responseTimeMs: 0
+          };
         }
       }
-    }
-  }
-}
 
 // Helper: Send structured leads straight to your specific Apps Script routing channel
 async function sendToGoogleSheets(phone, name, education, chatSummary, priority, channel) {
