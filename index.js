@@ -68,14 +68,17 @@ async function askGroq(promptText, vacancyContext = "", customSystem = null) {
         headers: {
           "Authorization": `Bearer ${GROQ_API_KEY}`,
           "Content-Type": "application/json"
-        }
+        },
+        timeout: 8000 // ⏱️ Prevent hanging requests
       }
     );
     
-    groqResult = {
-      replyText: groqResponse.data.choices[0].message.content,
-      responseTimeMs: 0
-    };
+    if (groqResponse?.data?.choices?.[0]?.message?.content) {
+      return {
+        replyText: groqResponse.data.choices[0].message.content,
+        responseTimeMs: 0
+      };
+    }
   } catch (error) {
     console.warn(`⚠️ Groq HTTP Issue encountered (${error.message})! Shifting over to execute backup track...`);
     isRateLimit = true; 
@@ -89,7 +92,7 @@ async function askGroq(promptText, vacancyContext = "", customSystem = null) {
         const backupStartTime = Date.now();
         
         const geminiResponse = await ai.models.generateContent({
-          model: "gemini-2.5-flash", // 🚀 FIXED: Set to the primary production model compatible with @google/genai SDK
+          model: "gemini-2.5-flash", 
           contents: promptText,
           config: {
             systemInstruction: finalSystemInstruction
@@ -99,27 +102,28 @@ async function askGroq(promptText, vacancyContext = "", customSystem = null) {
         const backupResponseTimeMs = Date.now() - backupStartTime;
         console.log("✅ Backup evaluation completed successfully via Gemini!");
         
-        return {
-          replyText: geminiResponse.text,
-          responseTimeMs: backupResponseTimeMs
-        };
+        if (geminiResponse && geminiResponse.text) {
+          return {
+            replyText: geminiResponse.text,
+            responseTimeMs: backupResponseTimeMs
+          };
+        }
       } catch (geminiError) {
         attempts--;
         console.warn(`⚠️ Gemini route hit an issue (${geminiError.message}). Attempts remaining: ${attempts}`);
         if (attempts > 0) {
           await new Promise(resolve => setTimeout(resolve, 1500));
-        } else {
-          console.error("🚨 Critical Error: Both Groq and Gemini providers failed entirely.");
-          
-          // ✨ FIXED: Instead of crashing the whole route, return a friendly default response text string
-          return {
-            replyText: "I'm experiencing a minor connection hiccup right now. Could you please send that message one more time?",
-            responseTimeMs: 0
-          };
         }
       }
     }
   }
+
+  // 🚨 3. Absolute Disaster Recovery: If BOTH channels completely flatlined, return valid fallback object structure
+  console.error("🚨 Critical System Level Alert: Both Groq and Gemini pipelines failed to resolve.");
+  return {
+    replyText: "I'm experiencing a temporary connection wave right now. Could you please resend that message for me?",
+    responseTimeMs: 0
+  };
 }
 
 // Helper: Send structured leads straight to your specific Apps Script routing channel
