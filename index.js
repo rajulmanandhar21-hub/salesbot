@@ -104,13 +104,16 @@ async function askGroq(promptText, vacancyContext = "", customSystem = null) {
         } else {
           console.error("🚨 Critical Error: Both Groq and Gemini providers failed entirely.");
           
-          // Safely return text instead of throwing an unhandled error exception!
+          // ✨ FIXED: Instead of crashing the whole route, return a friendly default response text string
           return {
             replyText: "I'm experiencing a minor connection hiccup right now. Could you please send that message one more time?",
             responseTimeMs: 0
           };
         }
       }
+    }
+  }
+}
 
 // Helper: Send structured leads straight to your specific Apps Script routing channel
 async function sendToGoogleSheets(phone, name, education, chatSummary, priority, channel) {
@@ -347,7 +350,11 @@ async function handleApplicationBot(req, res, from, channel, userMessage) {
     currentState.lastInteraction = now;
 
     // Kill keywords
-    const exitKeywords = ["don't want to apply", "cancel", "stop", "i don't want to apply anymore", "thank you no", "bhayo pardaina"];
+    const exitKeywords = [
+      "don't want to apply", "cancel", "stop", 
+      "i don't want to apply anymore", "thank you no", 
+      "bhayo pardaina", "nevermind", "never mind" // ✨ Intercepts instant opt-outs
+    ];
     if (exitKeywords.some(keyword => lowerMessage.includes(keyword))) {
       currentState.stage = 0;
       currentState.status = "Closed";
@@ -358,13 +365,13 @@ async function handleApplicationBot(req, res, from, channel, userMessage) {
       else if (channel === "Instagram") await sendInstagram(from, exitMsg);
       else await sendWhatsApp(from, exitMsg);
       
-      return; // ✅ FIXED: Avoid sending duplicate HTTP status
+      return; // Avoid sending duplicate HTTP status
     }
 
     // Closed session protector
     if (currentState.status === "Closed") {
       console.log(`User ${from} opted out. Ignoring message.`);
-      return; // ✅ FIXED: Avoid sending duplicate HTTP status
+      return; 
     }
 
     let botResponseText = "";
@@ -384,7 +391,6 @@ async function handleApplicationBot(req, res, from, channel, userMessage) {
       - Reply with only the single word: CANCEL, QUESTION, or NAME
       - No punctuation, no explanation, nothing else`;
       
-      // ✅ FIXED: Passed vacancy and default context parameters to ensure askGroq doesn't crash
       const result = await askGroq(classificationPrompt, "", "You are a single word classification script.");
       const stage1Class = result.replyText.trim().toUpperCase().split(/\s+/)[0];
       responseTimeMs += result.responseTimeMs;
