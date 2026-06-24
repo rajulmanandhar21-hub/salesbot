@@ -52,7 +52,7 @@ async function askGroq(promptText, vacancyContext = "", customSystem = null) {
   const finalSystemInstruction = customSystem || 
     `${SYSTEM_PROMPT}\n\nCURRENT LIVE VACANCY CONTEXT:\n${vacancyContext || "No alternative vacancy specs provided."}`;
 
-  // 1. Primary Execution via Groq
+ // 1. Primary Execution via Groq
   try {
     console.log("🚀 Attempting primary processing via Groq Cloud...");
     
@@ -61,9 +61,19 @@ async function askGroq(promptText, vacancyContext = "", customSystem = null) {
         { role: "system", content: finalSystemInstruction },
         { role: "user", content: promptText }
       ],
-      model: "llama-3.3-70b-versatile",
+      model: "llama-3.3-70b-specdec", // Stable ID
       temperature: 0.1,
     });
+    
+    groqResult = {
+      replyText: groqResponse.choices[0].message.content,
+      responseTimeMs: 0
+    };
+  } catch (error) {
+    // 🧠 FIXED: Shifting over to execution backup track for ANY connection failure/drop
+    console.warn(`⚠️ Groq Issue encountered (${error.message})! Shifting over to execute backup track...`);
+    isRateLimit = true; 
+  }
     
     groqResult = {
       replyText: groqResponse.choices[0].message.content,
