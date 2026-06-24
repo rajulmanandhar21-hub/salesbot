@@ -42,13 +42,11 @@ async function logToMonitor(sessionId, channel, sender, messageText, responseTim
   }
 }
 
-// Helper: Ask Groq Cloud (Llama 3.3 70B) with Balanced Gemini Failover
-// ✅ FIXED: Parameter structured to accept contextual vacancy data dynamically
+// Helper: Ask Groq Cloud with Balanced Gemini Failover
 async function askGroq(promptText, vacancyContext = "", customSystem = null) {
   let isRateLimit = false;
   let groqResult = null;
 
-  // Build a highly descriptive system baseline instruction
   const finalSystemInstruction = customSystem || 
     `${SYSTEM_PROMPT}\n\nCURRENT LIVE VACANCY CONTEXT:\n${vacancyContext || "No alternative vacancy specs provided."}`;
 
@@ -56,21 +54,20 @@ async function askGroq(promptText, vacancyContext = "", customSystem = null) {
   try {
     console.log("🚀 Attempting primary processing via Groq Cloud...");
     
-   const groqResponse = await groq.chat.completions.create({
-  messages: [
-    { role: "system", content: finalSystemInstruction },
-    { role: "user", content: promptText }
-  ],
-  model: "llama-3.3-70b-versatile", // ✨ Updated to active stable model
-  temperature: 0.1,
-});
+    const groqResponse = await groq.chat.completions.create({
+      messages: [
+        { role: "system", content: finalSystemInstruction },
+        { role: "user", content: promptText }
+      ],
+      model: "llama-3.3-70b-versatile", // Stable model replacement ID
+      temperature: 0.1,
+    });
     
     groqResult = {
       replyText: groqResponse.choices[0].message.content,
       responseTimeMs: 0
     };
   } catch (error) {
-    // 🧠 FIXED: Shifting over to execution backup track for ANY connection failure/drop or premature close
     console.warn(`⚠️ Groq Issue encountered (${error.message})! Shifting over to execute backup track...`);
     isRateLimit = true; 
   }
@@ -82,10 +79,14 @@ async function askGroq(promptText, vacancyContext = "", customSystem = null) {
     try {
       const backupStartTime = Date.now();
       
+      // Fixed SDK configuration structure format
       const geminiResponse = await ai.models.generateContent({
-  model: "gemini-2.5-flash", // ✨ Fixed SDK string format & updated to 2.5
-  contents: `${finalSystemInstruction}\n\nUser Message: ${promptText}`,
-});
+        model: "gemini-2.5-flash", 
+        contents: promptText,
+        config: {
+          systemInstruction: finalSystemInstruction
+        }
+      });
       
       const backupResponseTimeMs = Date.now() - backupStartTime;
       console.log("✅ Backup evaluation completed successfully via Gemini!");
@@ -95,36 +96,9 @@ async function askGroq(promptText, vacancyContext = "", customSystem = null) {
         responseTimeMs: backupResponseTimeMs
       };
     } catch (geminiError) {
-      console.error("🚨 Critical Error: Both Groq and Gemini providers failed entirely.", geminiError);
+      console.error("🚨 Critical Error: Both Groq and Gemini providers failed entirely.", geminiError.message);
       throw geminiError;
     }
-  }
-}
-// Helper: Send structured leads straight to your specific Apps Script routing channel
-async function sendToGoogleSheets(phone, name, education, chatSummary, priority, channel) {
-  try {
-    const url = process.env.GOOGLE_SCRIPT_URL || process.env.GOOGLE_SHEET_URL;
-    if (!url) return console.warn("⚠️ Google Sheets routing URL environment variable missing.");
-    
-    let safeEducation = education ? education.trim() : "";
-    if (safeEducation.startsWith('+') || safeEducation.startsWith('=')) {
-      safeEducation = `'${safeEducation}`; 
-    }
-    
-    const targetChannel = channel || "WhatsApp";
-    
-    await axios.post(url, {
-      type: "lead",
-      channel: targetChannel, 
-      phone: phone, 
-      name: name || "Unknown Candidate", 
-      education: safeEducation || "Not Provided",
-      priority: priority || "MEDIUM", 
-      summary: chatSummary || "No transcript brief generated."
-    });
-    console.log(`🚀 [LEAD DEPLOY] ${targetChannel} lead logged to sheet for: ${phone}`);
-  } catch (error) {
-    console.error("❌ Failed to push lead to Google Sheets:", error.message);
   }
 }
 
