@@ -111,10 +111,58 @@ async function askGroq(promptText, vacancyContext = "", customSystem = null) {
   }
 }
 
+// Helper: Send structured leads straight to your specific Apps Script routing channel
+async function sendToGoogleSheets(phone, name, education, chatSummary, priority, channel) {
+  try {
+    const url = process.env.GOOGLE_SCRIPT_URL || process.env.GOOGLE_SHEET_URL;
+    if (!url) return console.warn("⚠️ Google Sheets routing URL environment variable missing.");
+    
+    let safeEducation = education ? education.trim() : "";
+    if (safeEducation.startsWith('+') || safeEducation.startsWith('=')) {
+      safeEducation = `'${safeEducation}`; 
+    }
+    
+    const targetChannel = channel || "WhatsApp";
+    
+    await axios.post(url, {
+      type: "lead",
+      channel: targetChannel, 
+      phone: phone, 
+      name: name || "Unknown Candidate", 
+      education: safeEducation || "Not Provided",
+      priority: priority || "MEDIUM", 
+      summary: chatSummary || "No transcript brief generated."
+    });
+    console.log(`🚀 [LEAD DEPLOY] ${targetChannel} lead logged to sheet for: ${phone}`);
+  } catch (error) {
+    console.error("❌ Failed to push lead to Google Sheets:", error.message);
+  }
+}
+
+// 📲 ADDED BACK: Helper to Send WhatsApp messages safely
+async function sendWhatsApp(to, text) {
+  try {
+    await axios.post(
+      `https://graph.facebook.com/v19.0/${PHONE_NUMBER_ID}/messages`,
+      {
+        messaging_product: "whatsapp",
+        to: to,
+        type: "text",
+        text: { body: text }
+      },
+      {
+        headers: { Authorization: `Bearer ${WHATSAPP_TOKEN}` }
+      }
+    );
+    console.log(`📲 Outbound WhatsApp ping delivered to ${to}`);
+  } catch (err) {
+    console.error("❌ WhatsApp dispatch failed:", err.response?.data || err.message);
+  }
+}
+
 // Helper: Send Messenger message
 async function sendMessenger(to, text) {
   try {
-    // Replace YOUR_ACTUAL_FACEBOOK_PAGE_ID with your numeric Page ID
     await axios.post(
       `https://graph.facebook.com/v19.0/61590463751023/messages?access_token=${process.env.MESSENGER_TOKEN}`,
       {
@@ -127,6 +175,7 @@ async function sendMessenger(to, text) {
     console.error("❌ Messenger dispatch failed:", err.response?.data || err.message);
   }
 }
+
 // Helper: Send Instagram Message
 async function sendInstagram(to, text) {
   try {
@@ -266,6 +315,7 @@ app.post('/webhook', async (req, res) => {
     console.error("💥 General Webhook Payload Routing Crash:", error.message);
   }
 });
+
 // Centralized Core Processing Core Engine
 async function handleApplicationBot(req, res, from, channel, userMessage) {
   try {
@@ -455,7 +505,6 @@ async function handleApplicationBot(req, res, from, channel, userMessage) {
       if (!currentState.vacancyCache) {
         currentState.vacancyCache = await fetchJobVacancies();
       }
-      // ✅ FIXED: Correctly matching the two parameters expected by the updated askGroq handler
       const result = await askGroq(userMessage, currentState.vacancyCache);
       botResponseText = result.replyText;
       responseTimeMs = result.responseTimeMs;
@@ -493,7 +542,7 @@ async function handleApplicationBot(req, res, from, channel, userMessage) {
     } else if (channel === "Instagram") {
       await sendInstagram(from, botResponseText);
     } else {
-      await sendWhatsApp(from, botResponseText);
+      await sendWhatsApp(from, botResponseText); 
     }
 
   } catch (err) {
