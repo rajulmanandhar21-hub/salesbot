@@ -225,25 +225,23 @@ app.get('/webhook', (req, res) => {
 // Centralized Inbound Webhook Endpoint
 app.post('/webhook', async (req, res) => {
   const body = req.body;
-  console.log("📨 INCOMING WEBHOOK OBJECT TYPE:", body.object);
+  console.log("📨 INCOMING WEBHOOK OBJECT TYPE:", body?.object);
   console.log("📨 FULL PAYLOAD:", JSON.stringify(body, null, 2));
   
-  // 1. Send the response IMMEDIATELY right here to prevent timeouts
+  // 1. Send response IMMEDIATELY to prevent Meta gateway connection timeouts
   res.sendStatus(200);
 
   try {
     const entry = body?.entry?.[0];
     if (!entry) return; 
 
-// 1. Process Instagram Payload Safely
+    // 1. Process Instagram Payload Safely
     if (body.object === 'instagram') {
       let from = null;
       let userMessage = null;
 
       if (entry.messaging && entry.messaging[0]) {
         const messagingEvent = entry.messaging[0];
-        
-        // Check both message blocks safely
         const embeddedMessage = messagingEvent.message || messagingEvent.message_edit;
         
         if (!embeddedMessage) {
@@ -252,7 +250,6 @@ app.post('/webhook', async (req, res) => {
         }
 
         from = messagingEvent.sender?.id;
-        // Accept EITHER standard text or an edited text string
         userMessage = embeddedMessage.text; 
       } 
       else if (entry.changes && entry.changes[0]?.value) {
@@ -263,47 +260,53 @@ app.post('/webhook', async (req, res) => {
         }
       }
 
-      // Final logging check
-      if (from) {
-        console.log(`📩 Raw Event captured from ${from}. Text found: "${userMessage || 'UNDEFINED/NULL'}"`);
-        if (userMessage) {
-          await handleApplicationBot(req, res, from, "Instagram", userMessage);
-        }
+      if (from && userMessage) {
+        console.log(`📩 Raw Instagram Event captured from ${from}. Text: "${userMessage}"`);
+        await handleApplicationBot(req, res, from, "Instagram", userMessage);
       }
       return; 
     }
 
-    // 2. Process WhatsApp Payload
+    // 2. Process WhatsApp Payload Safely
     if (body.object === 'whatsapp_business_account') {
-      if (entry.changes && entry.changes[0].value.messages) {
-        const message = entry.changes[0].value.messages[0];
+      const changesValue = entry?.changes?.[0]?.value;
+      
+      // Check if it's an actual message event and not just a status delivery log
+      if (changesValue && changesValue.messages && changesValue.messages[0]) {
+        const message = changesValue.messages[0];
         const from = message.from;
-        if (message.type === 'text') {
+        
+        if (message.type === 'text' && message.text?.body) {
           const userMessage = message.text.body;
+          console.log(`📩 Raw WhatsApp Event captured from ${from}. Text: "${userMessage}"`);
           await handleApplicationBot(req, res, from, "WhatsApp", userMessage);
+        } else {
+          console.log(`⏭️ Skipping non-text WhatsApp message type: ${message.type}`);
         }
+      } else {
+        console.log("⏭️ Skipping WhatsApp status/receipt change update.");
       }
-      return; // ✅ FIXED: Standard clean functional exit
+      return; 
     }
 
-    // 3. Process Messenger Payload
+    // 3. Process Messenger Payload Safely
     if (body.object === 'page') {
       if (entry.messaging && entry.messaging[0]) {
         const messagingEvent = entry.messaging[0];
         const senderId = messagingEvent.sender?.id;
         if (messagingEvent.message && messagingEvent.message.text) {
           const userMessage = messagingEvent.message.text;
+          console.log(`📩 Raw Messenger Event captured from ${senderId}. Text: "${userMessage}"`);
           await handleApplicationBot(req, res, senderId, "Messenger", userMessage);
         }
       }
-      return; // ✅ FIXED: Standard clean functional exit
+      return; 
     }
 
   } catch (error) {
     console.error("💥 General Webhook Payload Routing Crash:", error.message);
   }
 });
-
 // Centralized Core Processing Core Engine
 async function handleApplicationBot(req, res, from, channel, userMessage) {
   try {
