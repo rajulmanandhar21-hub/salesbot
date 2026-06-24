@@ -50,7 +50,7 @@ async function askGroq(promptText, vacancyContext = "", customSystem = null) {
   const finalSystemInstruction = customSystem || 
     `${SYSTEM_PROMPT}\n\nCURRENT LIVE VACANCY CONTEXT:\n${vacancyContext || "No alternative vacancy specs provided."}`;
 
-  // 1. Primary Execution via Groq (Using the rock-solid standard 8B endpoint)
+  // 1. Primary Execution via Groq (Using the correct live active model identifier)
   try {
     console.log("🚀 Attempting primary processing via Groq Cloud...");
     
@@ -59,7 +59,7 @@ async function askGroq(promptText, vacancyContext = "", customSystem = null) {
         { role: "system", content: finalSystemInstruction },
         { role: "user", content: promptText }
       ],
-      model: "llama3-8b-8192", // ⚡ Swapped to the most stable, high-availability Groq endpoint
+      model: "llama-3.1-8b-instant", // ⚡ FIXED: Updated to active live model string
       temperature: 0.1,
     });
     
@@ -74,7 +74,7 @@ async function askGroq(promptText, vacancyContext = "", customSystem = null) {
 
   if (groqResult) return groqResult;
 
-  // 2. Fallback Execution via Gemini with 1.5-Flash High-Availability
+  // 2. Fallback Execution via Gemini using the current SDK format
   if (isRateLimit) {
     let attempts = 2; 
     while (attempts > 0) {
@@ -82,7 +82,7 @@ async function askGroq(promptText, vacancyContext = "", customSystem = null) {
         const backupStartTime = Date.now();
         
         const geminiResponse = await ai.models.generateContent({
-          model: "gemini-1.5-flash", // 🚀 Swapped to 1.5-flash for maximum availability away from 2.5 traffic jams
+          model: "gemini-2.5-flash", // 🚀 FIXED: Set to the primary production model compatible with @google/genai SDK
           contents: promptText,
           config: {
             systemInstruction: finalSystemInstruction
